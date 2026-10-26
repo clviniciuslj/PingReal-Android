@@ -1,3 +1,4 @@
+
 package br.com.pingreal
 
 import android.app.Activity
@@ -7,10 +8,7 @@ import android.graphics.Typeface
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Bundle
-import android.text.InputType
 import android.view.Gravity
-import android.view.ViewGroup
-import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
@@ -20,7 +18,6 @@ import android.widget.TextView
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.util.concurrent.Executors
-import kotlin.math.roundToInt
 
 class MainActivity : Activity() {
 
@@ -30,8 +27,6 @@ class MainActivity : Activity() {
     private val white = Color.rgb(232, 238, 233)
     private val muted = Color.rgb(145, 160, 150)
 
-    private lateinit var root: LinearLayout
-    private lateinit var content: LinearLayout
     private lateinit var command: EditText
     private lateinit var output: TextView
     private lateinit var scroll: ScrollView
@@ -40,10 +35,9 @@ class MainActivity : Activity() {
     private lateinit var traceButton: Button
     private lateinit var networkFooter: TextView
 
-    @Volatile private var pingProcess: Process? = null
+    @Volatile private var process: Process? = null
     @Volatile private var running = false
     @Volatile private var stopRequested = false
-    @Volatile private var pingStartedAt = 0L
 
     private val executor = Executors.newSingleThreadExecutor()
 
@@ -51,144 +45,74 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         window.statusBarColor = bg
         window.navigationBarColor = bg
-        buildShell()
-        showPingScreen()
+        buildInterface()
     }
 
-    private fun buildShell() {
-        root = LinearLayout(this).apply {
+    private fun buildInterface() {
+        val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(18), dp(20), dp(12))
             setBackgroundColor(bg)
         }
 
-        val header = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(0, dp(4), 0, dp(18))
-        }
-
-        header.addView(TextView(this).apply {
-            text = "⌁"
-            textSize = 36f
-            gravity = Gravity.CENTER
-            setTextColor(green)
-            typeface = Typeface.DEFAULT_BOLD
-        })
-
-        header.addView(TextView(this).apply {
+        root.addView(TextView(this).apply {
             text = "PING REAL"
             textSize = 25f
             gravity = Gravity.CENTER
             setTextColor(white)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            letterSpacing = 0.12f
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, dp(8), 0, dp(20))
         })
 
-        root.addView(header)
-
-        content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-
-        root.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
-        setContentView(root)
-    }
-
-    private fun showPingScreen() {
-        content.removeAllViews()
-        content.addView(TextView(this).apply {
+        root.addView(TextView(this).apply {
             text = "ENDEREÇO"
             textSize = 11f
             setTextColor(muted)
-            typeface = Typeface.DEFAULT_BOLD
-            letterSpacing = 0.08f
-            setPadding(0, 0, 0, dp(8))
         })
 
         command = EditText(this).apply {
-            setSingleLine(true)
+            singleLine = true
             textSize = 16f
             setTextColor(white)
             setHintTextColor(muted)
-            hint = "IP ou host  -n 20"
-            setPadding(dp(14), dp(12), dp(14), dp(12))
+            hint = "IP ou host"
+            setPadding(dp(12), dp(8), dp(12), dp(8))
             setBackgroundColor(panel)
             typeface = Typeface.MONOSPACE
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-            imeOptions = EditorInfo.IME_ACTION_GO
         }
-        content.addView(command, LinearLayout.LayoutParams(-1, dp(52)))
+        root.addView(command, LinearLayout.LayoutParams(-1, dp(52)))
 
         val buttons = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(12), 0, dp(8))
+            setPadding(0, dp(10), 0, dp(6))
         }
 
-        runButton = Button(this).apply {
-            text = "INICIAR"
-            isAllCaps = false
-            setBackgroundColor(green)
-            setTextColor(Color.rgb(5, 20, 10))
-            typeface = Typeface.DEFAULT_BOLD
-            setOnClickListener { startPing() }
+        runButton = makeButton("INICIAR", green, Color.BLACK) {
+            startCommand(false)
         }
-
-        stopButton = Button(this).apply {
-            text = "PARAR"
-            isAllCaps = false
-            setBackgroundColor(Color.rgb(62, 39, 39))
-            setTextColor(white)
-            isEnabled = false
-            setOnClickListener { stopPing() }
+        stopButton = makeButton("PARAR", Color.rgb(62, 39, 39), white) {
+            stopCommand()
         }
+        stopButton.isEnabled = false
 
         buttons.addView(runButton, LinearLayout.LayoutParams(0, dp(46), 1f))
         buttons.addView(stopButton, LinearLayout.LayoutParams(0, dp(46), 1f).apply {
             marginStart = dp(8)
         })
-        content.addView(buttons)
+        root.addView(buttons)
 
-        traceButton = Button(this).apply {
-            text = "TRACEROUTE"
-            isAllCaps = false
-            setBackgroundColor(panel)
-            setTextColor(green)
-            typeface = Typeface.DEFAULT_BOLD
-            setOnClickListener { startTraceRoute() }
+        traceButton = makeButton("TRACEROUTE", panel, green) {
+            startCommand(true)
         }
-        content.addView(traceButton, LinearLayout.LayoutParams(-1, dp(42)).apply {
-            topMargin = dp(2)
-            bottomMargin = dp(4)
-        })
+        root.addView(traceButton, LinearLayout.LayoutParams(-1, dp(44)))
 
-        val consoleHeader = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(12), 0, dp(8))
-        }
-
-        consoleHeader.addView(TextView(this).apply {
+        root.addView(TextView(this).apply {
             text = "CONSOLE"
             textSize = 12f
             setTextColor(green)
             typeface = Typeface.DEFAULT_BOLD
-            letterSpacing = 0.1f
-        }, LinearLayout.LayoutParams(0, -2, 1f))
-
-        consoleHeader.addView(TextView(this).apply {
-            text = "↻"
-            textSize = 27f
-            gravity = Gravity.CENTER
-            setTextColor(green)
-            contentDescription = "Limpar console"
-            isClickable = true
-            setOnClickListener {
-                if (!running) output.text = ""
-            }
-        }, LinearLayout.LayoutParams(dp(44), dp(40)))
-
-        content.addView(consoleHeader)
+            setPadding(0, dp(14), 0, dp(8))
+        })
 
         scroll = ScrollView(this).apply {
             setBackgroundColor(Color.rgb(4, 8, 5))
@@ -199,261 +123,79 @@ class MainActivity : Activity() {
             textSize = 12.5f
             setTextColor(green)
             typeface = Typeface.MONOSPACE
-            setPadding(dp(13), dp(13), dp(13), dp(13))
+            setPadding(dp(12), dp(12), dp(12), dp(12))
             setTextIsSelectable(true)
-            setLineSpacing(dp(3).toFloat(), 1f)
         }
 
-        scroll.addView(output, ViewGroup.LayoutParams(-1, -2))
-        content.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        scroll.addView(output)
+        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
 
         networkFooter = TextView(this).apply {
-            textSize = 10.5f
+            textSize = 10f
             setTextColor(green)
             typeface = Typeface.MONOSPACE
             setPadding(0, dp(10), 0, 0)
-            gravity = Gravity.CENTER_VERTICAL
-            setLineSpacing(0f, 1f)
         }
-        content.addView(networkFooter, LinearLayout.LayoutParams(-1, -2))
+        root.addView(networkFooter)
+
+        setContentView(root)
         updateNetworkFooter()
     }
 
-    override fun onResume() {
-        super.onResume()
-        if (::networkFooter.isInitialized) updateNetworkFooter()
-    }
-
-    private fun updateNetworkFooter() {
-        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val network = cm.activeNetwork
-        val caps = network?.let { cm.getNetworkCapabilities(it) }
-        val props = network?.let { cm.getLinkProperties(it) }
-
-        val type = when {
-            caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true -> "Wi-Fi"
-            caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true -> "Móvel"
-            caps?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true -> "Ethernet"
-            caps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true -> "VPN"
-            else -> "—"
-        }
-
-        val ip = props?.linkAddresses
-            ?.firstOrNull { it.address is java.net.Inet4Address && !it.address.isLoopbackAddress }
-            ?.address?.hostAddress ?: "—"
-
-        val gateway = props?.routes
-            ?.firstOrNull { route ->
-                val destination = route.destination
-                destination.prefixLength == 0 && destination.address.isAnyLocalAddress
-            }
-            ?.gateway?.hostAddress ?: "—"
-
-        val dns = props?.dnsServers
-            ?.firstOrNull { it is java.net.Inet4Address }
-            ?.hostAddress ?: props?.dnsServers?.firstOrNull()?.hostAddress ?: "—"
-
-        networkFooter.text = "GW $gateway                 DNS $dns\nIP $ip                 NET $type"
-    }
-
-    private fun startPing() {
-        if (running) return
-
-        val raw = command.text.toString().trim()
-        val parts = raw.split(Regex("\\s+")).filter { it.isNotBlank() }
-
-        if (parts.isEmpty()) {
-            append("Informe um IP ou host.")
-            return
-        }
-
-        val host = parts[0]
-        if (host.startsWith("-") || !host.matches(Regex("[A-Za-z0-9._:%-]+"))) {
-            append("Endereço inválido.")
-            return
-        }
-
-        var continuous = false
-        var count = 4
-        var countSpecified = false
-        var index = 1
-
-        while (index < parts.size) {
-            when (parts[index].lowercase()) {
-                "-t" -> {
-                    if (continuous) {
-                        append("Parâmetro -t repetido.")
-                        return
-                    }
-                    continuous = true
-                    index++
-                }
-                "-n", "-c" -> {
-                    if (countSpecified || index + 1 >= parts.size) {
-                        append("Quantidade inválida.")
-                        return
-                    }
-                    val parsed = parts[index + 1].toIntOrNull()
-                    if (parsed == null || parsed !in 1..10000) {
-                        append("Quantidade deve estar entre 1 e 10000.")
-                        return
-                    }
-                    count = parsed
-                    countSpecified = true
-                    index += 2
-                }
-                else -> {
-                    append("Parâmetro desconhecido: ${parts[index]}")
-                    return
-                }
-            }
-        }
-
-        if (continuous && countSpecified) {
-            append("Use -t ou -n quantidade, não os dois.")
-            return
-        }
-
-        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-        imm.hideSoftInputFromWindow(command.windowToken, 0)
-        command.clearFocus()
-
-        val args = mutableListOf("/system/bin/ping", "-W", "1", "-s", "32")
-        if (!continuous) {
-            args.add("-c")
-            args.add(count.toString())
-        }
-        args.add(host)
-
-        append("")
-        append("────────────────────────────")
-        append("> $raw")
-        append(if (continuous) "Ping contínuo para $host" else "Ping para $host ($count tentativas)")
-        append("")
-
-        running = true
-        stopRequested = false
-        pingStartedAt = System.currentTimeMillis()
-        runButton.isEnabled = false
-        stopButton.isEnabled = true
-        traceButton.isEnabled = false
-
-        executor.execute {
-            var process: Process? = null
-            val capturedLines = mutableListOf<String>()
-            var readError: String? = null
-
-            try {
-                process = ProcessBuilder(args).redirectErrorStream(true).start()
-                pingProcess = process
-
-                try {
-                    BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
-                        while (true) {
-                            val line = reader.readLine() ?: break
-                            synchronized(capturedLines) { capturedLines.add(line) }
-
-                            val formatted = formatPingLine(line)
-                            if (formatted != null) {
-                                runOnUiThread { if (!isFinishing && !isDestroyed) append(formatted) }
-                            } else if (isErrorLine(line)) {
-                                runOnUiThread { if (!isFinishing && !isDestroyed) append(line) }
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    if (!stopRequested) readError = e.message ?: "falha ao ler a saída do ping"
-                }
-
-                try {
-                    process.waitFor()
-                } catch (_: InterruptedException) {
-                    Thread.currentThread().interrupt()
-                }
-            } catch (e: Exception) {
-                if (!stopRequested) readError = e.message ?: "falha ao executar ping"
-            } finally {
-                val snapshot = synchronized(capturedLines) { capturedLines.toList() }
-                runOnUiThread {
-                    if (!isFinishing && !isDestroyed) {
-                        append("")
-                        append("Estatísticas do Ping para $host:")
-                        appendSummary(snapshot, continuous, count)
-                        if (stopRequested) {
-                            append("Interrompido pelo usuário.")
-                        } else if (readError != null) {
-                            append("Erro: $readError")
-                        } else {
-                            append("Concluído.")
-                        }
-                        append("────────────────────────────")
-                    }
-                }
-
-                pingProcess = null
-                running = false
-                runOnUiThread {
-                    if (!isFinishing && !isDestroyed) {
-                        runButton.isEnabled = true
-                        stopButton.isEnabled = false
-                        traceButton.isEnabled = true
-                    }
-                }
-            }
+    private fun makeButton(
+        label: String,
+        background: Int,
+        foreground: Int,
+        action: () -> Unit
+    ): Button {
+        return Button(this).apply {
+            text = label
+            isAllCaps = false
+            setBackgroundColor(background)
+            setTextColor(foreground)
+            typeface = Typeface.DEFAULT_BOLD
+            setOnClickListener { action() }
         }
     }
 
-    private fun startTraceRoute() {
+    private fun startCommand(traceroute: Boolean) {
         if (running) return
 
         val host = command.text.toString().trim().split(Regex("\\s+")).firstOrNull().orEmpty()
-        if (host.isBlank() || host.startsWith("-") || !host.matches(Regex("[A-Za-z0-9._:%-]+"))) {
-            append("Informe um IP ou hostname válido para o traceroute.")
+
+        if (host.isBlank() || host.startsWith("-") ||
+            !host.matches(Regex("[A-Za-z0-9._:%-]+"))
+        ) {
+            append("Informe um IP ou hostname válido.")
             return
         }
 
-        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-        imm.hideSoftInputFromWindow(command.windowToken, 0)
+        val manager = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+        manager.hideSoftInputFromWindow(command.windowToken, 0)
         command.clearFocus()
 
+        val args = if (traceroute) {
+            listOf("/system/bin/traceroute", "-m", "20", "-w", "1", host)
+        } else {
+            listOf("/system/bin/ping", "-W", "1", "-c", "4", host)
+        }
+
         append("")
-        append("────────────────────────────")
-        append("> traceroute $host")
-        append("Rastreando rota para $host (máximo de 20 saltos)...")
-        append("Cada salto pode levar alguns segundos; * indica ausência de resposta.")
-        append("")
+        append("> ${args.joinToString(" ")}")
 
         running = true
         stopRequested = false
         runButton.isEnabled = false
-        stopButton.isEnabled = true
         traceButton.isEnabled = false
+        stopButton.isEnabled = true
 
         executor.execute {
-            var process: Process? = null
-            var failure: String? = null
+            var error: String? = null
             try {
-                val commands = listOf(
-                    listOf("/system/bin/traceroute", "-m", "20", "-w", "1", host),
-                    listOf("traceroute", "-m", "20", "-w", "1", host),
-                    listOf("toybox", "traceroute", "-m", "20", "-w", "1", host)
-                )
-                var lastStartError: Exception? = null
-                for (args in commands) {
-                    try {
-                        process = ProcessBuilder(args).redirectErrorStream(true).start()
-                        pingProcess = process
-                        lastStartError = null
-                        break
-                    } catch (e: Exception) {
-                        lastStartError = e
-                    }
-                }
-                if (process == null) {
-                    throw lastStartError ?: IllegalStateException("Traceroute não está disponível neste Android.")
-                }
+                val child = ProcessBuilder(args).redirectErrorStream(true).start()
+                process = child
 
-                BufferedReader(InputStreamReader(process!!.inputStream)).use { reader ->
+                BufferedReader(InputStreamReader(child.inputStream)).use { reader ->
                     while (true) {
                         val line = reader.readLine() ?: break
                         if (line.isNotBlank()) {
@@ -463,26 +205,21 @@ class MainActivity : Activity() {
                         }
                     }
                 }
-                process!!.waitFor()
+                child.waitFor()
             } catch (e: Exception) {
-                if (!stopRequested) failure = e.message ?: "não foi possível executar o traceroute"
+                error = e.message ?: "Comando indisponível neste Android."
             } finally {
-                runOnUiThread {
-                    if (!isFinishing && !isDestroyed) {
-                        if (stopRequested) append("Traceroute interrompido pelo usuário.")
-                        else if (failure != null) {
-                            append("Não foi possível executar o traceroute: $failure")
-                            append("Este Android pode não incluir o comando traceroute.")
-                        } else append("Traceroute concluído.")
-                        append("────────────────────────────")
-                    }
-                }
-                pingProcess = null
+                process = null
                 running = false
+
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed) {
-                        runButton.isEnabled = true
+                        if (error != null) append("Erro: $error")
+                        else if (stopRequested) append("Interrompido.")
+                        else append("Concluído.")
+
                         stopButton.isEnabled = false
+                        runButton.isEnabled = true
                         traceButton.isEnabled = true
                     }
                 }
@@ -490,85 +227,44 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun parseReply(line: String): PingReply? {
-        // Exemplo Linux: 64 bytes from 192.168.1.1: icmp_seq=1 ttl=64 time=2.34 ms
-        val match = Regex(
-            """(\d+)\s+bytes from\s+(.+?):.*?\bttl[= ](\d+).*?\btime[=<]([\d.]+)\s*ms""",
-            RegexOption.IGNORE_CASE
-        ).find(line) ?: return null
-
-        val address = match.groupValues[2].trim().removeSuffix(":")
-        val ttl = match.groupValues[3]
-        val time = match.groupValues[4].toDoubleOrNull() ?: return null
-        return PingReply(address, ttl, time)
-    }
-
-    private data class PingReply(val address: String, val ttl: String, val timeMs: Double)
-
-    private fun formatPingLine(line: String): String? {
-        val reply = parseReply(line) ?: return null
-        return "Resposta de ${reply.address}: bytes=32 tempo=${reply.timeMs.roundToInt()}ms TTL=${reply.ttl}"
-    }
-
-    private fun isErrorLine(line: String): Boolean {
-        val lower = line.lowercase()
-        return lower.contains("unknown host") ||
-            lower.contains("cannot resolve") ||
-            lower.contains("network is unreachable") ||
-            lower.contains("destination host unreachable") ||
-            lower.contains("operation not permitted") ||
-            lower.contains("name or service not known") ||
-            lower.contains("bad address") ||
-            lower.contains("100% packet loss") ||
-            lower.contains("connect:") ||
-            lower.contains("ping:")
-    }
-
-    private fun appendSummary(lines: List<String>, continuous: Boolean, requestedCount: Int) {
-        val replies = lines.mapNotNull { parseReply(it)?.timeMs }
-
-        val nativeSummary = lines.firstOrNull { it.contains("packets transmitted") }
-        val nativeSent = nativeSummary?.let {
-            Regex("""(\d+)\s+packets transmitted""")
-                .find(it)?.groupValues?.get(1)?.toIntOrNull()
-        }
-
-        val sent = when {
-            nativeSent != null -> nativeSent
-            !continuous && !stopRequested -> requestedCount
-            stopRequested && continuous -> {
-                val elapsed = (System.currentTimeMillis() - pingStartedAt).coerceAtLeast(0)
-                maxOf(replies.size, (elapsed / 1000L).toInt())
-            }
-            else -> replies.size
-        }
-
-        val received = replies.size
-        val lost = (sent - received).coerceAtLeast(0)
-        val loss = if (sent > 0) ((lost * 100.0) / sent).roundToInt() else 0
-
-        append("    Pacotes: Enviados = $sent, Recebidos = $received, Perdidos = $lost (${loss}% de perda),")
-
-        if (stopRequested && nativeSent == null && continuous) {
-            append("    Nota: quantidade enviada é uma estimativa após a interrupção.")
-        }
-
-        if (replies.isNotEmpty()) {
-            append(
-                "    Mínimo = ${replies.minOrNull()!!.roundToInt()}ms, " +
-                    "Máximo = ${replies.maxOrNull()!!.roundToInt()}ms, " +
-                    "Média = ${replies.average().roundToInt()}ms"
-            )
-        } else {
-            append("    Nenhuma resposta válida recebida.")
-        }
-    }
-
-    private fun stopPing() {
-        val process = pingProcess ?: return
+    private fun stopCommand() {
         stopRequested = true
-        append("Interrompendo ping e calculando resultados...")
-        process.destroy()
+        process?.destroy()
+    }
+
+    private fun updateNetworkFooter() {
+        try {
+            val manager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val network = manager.activeNetwork
+            val caps = network?.let { manager.getNetworkCapabilities(it) }
+            val props = network?.let { manager.getLinkProperties(it) }
+
+            val type = when {
+                caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true -> "Wi-Fi"
+                caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true -> "Móvel"
+                caps?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true -> "Ethernet"
+                caps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true -> "VPN"
+                else -> "—"
+            }
+
+            val ip = props?.linkAddresses
+                ?.firstOrNull {
+                    it.address is java.net.Inet4Address &&
+                        !it.address.isLoopbackAddress
+                }?.address?.hostAddress ?: "—"
+
+            val gateway = props?.routes
+                ?.firstOrNull { it.isDefaultRoute }
+                ?.gateway?.hostAddress ?: "—"
+
+            val dns = props?.dnsServers
+                ?.firstOrNull { it is java.net.Inet4Address }
+                ?.hostAddress ?: "—"
+
+            networkFooter.text = "GW $gateway\nDNS $dns\nIP $ip   NET $type"
+        } catch (_: Exception) {
+            networkFooter.text = "Informações de rede indisponíveis."
+        }
     }
 
     private fun append(line: String) {
@@ -580,7 +276,7 @@ class MainActivity : Activity() {
         (value * resources.displayMetrics.density).toInt()
 
     override fun onDestroy() {
-        pingProcess?.destroy()
+        process?.destroy()
         executor.shutdownNow()
         super.onDestroy()
     }
