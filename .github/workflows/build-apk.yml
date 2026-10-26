@@ -39,10 +39,31 @@ jobs:
           yes | "$SDKMANAGER" --licenses || true
           "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
+      - name: Inspect Android manifests
+        run: |
+          echo "=== MANIFESTO PRINCIPAL ==="
+          cat -n app/src/main/AndroidManifest.xml
+
+          echo "=== VALIDACAO XML ==="
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          path = "app/src/main/AndroidManifest.xml"
+          try:
+              ET.parse(path)
+              print("XML valido")
+          except ET.ParseError as e:
+              print(f"ERRO XML: {e}")
+              raise
+          PY
+
+          echo "=== TODOS OS MANIFESTOS ==="
+          find . -name AndroidManifest.xml -type f
+
       - name: Build APK
-        run: gradle assembleDebug
+        run: gradle assembleDebug --stacktrace --info
 
       - name: Upload APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: PingReal-APK
