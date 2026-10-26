@@ -187,7 +187,8 @@ class MainActivity : Activity() {
 
         val host = command.text.toString().trim()
 
-        if (host.isBlank() ||
+        if (
+            host.isBlank() ||
             !host.matches(Regex("[A-Za-z0-9._:%-]+")) ||
             host.startsWith("-")
         ) {
@@ -218,14 +219,9 @@ class MainActivity : Activity() {
                 BufferedReader(
                     InputStreamReader(newProcess.inputStream)
                 ).use { reader ->
-                    var line: String?
-
-                    while (running && reader.readLine().also {
-                            line = it
-                        } != null
-                    ) {
-                        val currentLine = line ?: continue
-                        appendOutput(currentLine + "\n")
+                    while (running) {
+                        val line = reader.readLine() ?: break
+                        appendOutput("$line\n")
                     }
                 }
 
@@ -265,6 +261,7 @@ class MainActivity : Activity() {
     private fun appendOutput(message: String) {
         runOnUiThread {
             output.append(message)
+
             scroll.post {
                 scroll.fullScroll(ScrollView.FOCUS_DOWN)
             }
@@ -272,7 +269,9 @@ class MainActivity : Activity() {
     }
 
     private fun dp(value: Int): Int {
-        return (value * resources.displayMetrics.density).toInt()
+        return (
+            value * resources.displayMetrics.density
+        ).toInt()
     }
 
     override fun onDestroy() {
