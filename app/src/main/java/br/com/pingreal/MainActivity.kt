@@ -2,14 +2,11 @@
 package br.com.pingreal
 
 import android.app.Activity
-import android.content.Context
+import android.os.Bundle
 import android.graphics.Color
 import android.graphics.Typeface
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
-import android.os.Bundle
 import android.view.Gravity
-import android.view.inputmethod.InputMethodManager
+import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -22,29 +19,31 @@ import java.util.concurrent.Executors
 class MainActivity : Activity() {
 
     private val bg = Color.rgb(10, 14, 11)
-    private val panel = Color.rgb(23, 31, 25)
-    private val green = Color.rgb(74, 222, 128)
-    private val white = Color.rgb(232, 238, 233)
-    private val muted = Color.rgb(145, 160, 150)
+    private val panel = Color.rgb(24, 31, 26)
+    private val green = Color.rgb(91, 255, 143)
+    private val white = Color.rgb(235, 245, 237)
+    private val muted = Color.rgb(130, 150, 135)
 
     private lateinit var command: EditText
     private lateinit var output: TextView
     private lateinit var scroll: ScrollView
     private lateinit var runButton: Button
     private lateinit var stopButton: Button
-    private lateinit var traceButton: Button
-    private lateinit var networkFooter: TextView
 
-    @Volatile private var process: Process? = null
-    @Volatile private var running = false
-    @Volatile private var stopRequested = false
+    @Volatile
+    private var process: Process? = null
+
+    @Volatile
+    private var running = false
 
     private val executor = Executors.newSingleThreadExecutor()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         window.statusBarColor = bg
         window.navigationBarColor = bg
+
         buildInterface()
     }
 
@@ -55,56 +54,81 @@ class MainActivity : Activity() {
             setBackgroundColor(bg)
         }
 
-        root.addView(TextView(this).apply {
+        val title = TextView(this).apply {
             text = "PING REAL"
             textSize = 25f
             gravity = Gravity.CENTER
             setTextColor(white)
             typeface = Typeface.DEFAULT_BOLD
-            setPadding(0, dp(8), 0, dp(20))
-        })
+            setPadding(0, dp(8), 0, dp(24))
+        }
+
+        root.addView(
+            title,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
 
         root.addView(TextView(this).apply {
-            text = "ENDEREÇO"
+            text = "ENDEREÇO IP OU HOST"
             textSize = 11f
             setTextColor(muted)
+            setPadding(0, 0, 0, dp(6))
         })
 
         command = EditText(this).apply {
-            singleLine = true
+            setSingleLine(true)
             textSize = 16f
             setTextColor(white)
             setHintTextColor(muted)
-            hint = "IP ou host"
+            hint = "Ex.: 8.8.8.8"
             setPadding(dp(12), dp(8), dp(12), dp(8))
             setBackgroundColor(panel)
             typeface = Typeface.MONOSPACE
         }
-        root.addView(command, LinearLayout.LayoutParams(-1, dp(52)))
+
+        root.addView(
+            command,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(52)
+            )
+        )
 
         val buttons = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(10), 0, dp(6))
+            setPadding(0, dp(12), 0, dp(8))
         }
 
-        runButton = makeButton("INICIAR", green, Color.BLACK) {
-            startCommand(false)
+        runButton = makeButton("EXECUTAR", green, Color.BLACK) {
+            startPing()
         }
-        stopButton = makeButton("PARAR", Color.rgb(62, 39, 39), white) {
-            stopCommand()
+
+        stopButton = makeButton(
+            "PARAR",
+            Color.rgb(62, 39, 39),
+            white
+        ) {
+            stopPing()
         }
+
         stopButton.isEnabled = false
 
-        buttons.addView(runButton, LinearLayout.LayoutParams(0, dp(46), 1f))
-        buttons.addView(stopButton, LinearLayout.LayoutParams(0, dp(46), 1f).apply {
-            marginStart = dp(8)
-        })
-        root.addView(buttons)
+        buttons.addView(
+            runButton,
+            LinearLayout.LayoutParams(0, dp(48), 1f)
+        )
 
-        traceButton = makeButton("TRACEROUTE", panel, green) {
-            startCommand(true)
-        }
-        root.addView(traceButton, LinearLayout.LayoutParams(-1, dp(44)))
+        buttons.addView(
+            stopButton,
+            LinearLayout.LayoutParams(0, dp(48), 1f).apply {
+                marginStart = dp(8)
+            }
+        )
+
+        root.addView(buttons)
 
         root.addView(TextView(this).apply {
             text = "CONSOLE"
@@ -125,21 +149,21 @@ class MainActivity : Activity() {
             typeface = Typeface.MONOSPACE
             setPadding(dp(12), dp(12), dp(12), dp(12))
             setTextIsSelectable(true)
+            text = "Ping Real iniciado.\nAguardando comando...\n"
         }
 
         scroll.addView(output)
-        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
 
-        networkFooter = TextView(this).apply {
-            textSize = 10f
-            setTextColor(green)
-            typeface = Typeface.MONOSPACE
-            setPadding(0, dp(10), 0, 0)
-        }
-        root.addView(networkFooter)
+        root.addView(
+            scroll,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+        )
 
         setContentView(root)
-        updateNetworkFooter()
     }
 
     private fun makeButton(
@@ -158,125 +182,107 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun startCommand(traceroute: Boolean) {
+    private fun startPing() {
         if (running) return
 
-        val host = command.text.toString().trim().split(Regex("\\s+")).firstOrNull().orEmpty()
+        val host = command.text.toString().trim()
 
-        if (host.isBlank() || host.startsWith("-") ||
-            !host.matches(Regex("[A-Za-z0-9._:%-]+"))
+        if (host.isBlank() ||
+            !host.matches(Regex("[A-Za-z0-9._:%-]+")) ||
+            host.startsWith("-")
         ) {
-            append("Informe um IP ou hostname válido.")
+            appendOutput("Informe um IP ou hostname válido.\n")
             return
         }
 
-        val manager = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-        manager.hideSoftInputFromWindow(command.windowToken, 0)
-        command.clearFocus()
-
-        val args = if (traceroute) {
-            listOf("/system/bin/traceroute", "-m", "20", "-w", "1", host)
-        } else {
-            listOf("/system/bin/ping", "-W", "1", "-c", "4", host)
-        }
-
-        append("")
-        append("> ${args.joinToString(" ")}")
-
         running = true
-        stopRequested = false
         runButton.isEnabled = false
-        traceButton.isEnabled = false
         stopButton.isEnabled = true
 
-        executor.execute {
-            var error: String? = null
-            try {
-                val child = ProcessBuilder(args).redirectErrorStream(true).start()
-                process = child
+        appendOutput("\n> ping $host\n")
+        appendOutput("Iniciando teste de conectividade...\n\n")
 
-                BufferedReader(InputStreamReader(child.inputStream)).use { reader ->
-                    while (true) {
-                        val line = reader.readLine() ?: break
-                        if (line.isNotBlank()) {
-                            runOnUiThread {
-                                if (!isFinishing && !isDestroyed) append(line)
-                            }
-                        }
+        executor.execute {
+            try {
+                val newProcess = ProcessBuilder(
+                    "ping",
+                    "-c",
+                    "1000000",
+                    host
+                )
+                    .redirectErrorStream(true)
+                    .start()
+
+                process = newProcess
+
+                BufferedReader(
+                    InputStreamReader(newProcess.inputStream)
+                ).use { reader ->
+                    var line: String?
+
+                    while (running && reader.readLine().also {
+                            line = it
+                        } != null
+                    ) {
+                        val currentLine = line ?: continue
+                        appendOutput(currentLine + "\n")
                     }
                 }
-                child.waitFor()
+
+                if (running) {
+                    appendOutput("\nTeste finalizado.\n")
+                }
             } catch (e: Exception) {
-                error = e.message ?: "Comando indisponível neste Android."
+                appendOutput(
+                    "\nErro ao executar ping: ${e.message}\n"
+                )
             } finally {
                 process = null
                 running = false
 
                 runOnUiThread {
-                    if (!isFinishing && !isDestroyed) {
-                        if (error != null) append("Erro: $error")
-                        else if (stopRequested) append("Interrompido.")
-                        else append("Concluído.")
-
-                        stopButton.isEnabled = false
-                        runButton.isEnabled = true
-                        traceButton.isEnabled = true
-                    }
+                    runButton.isEnabled = true
+                    stopButton.isEnabled = false
                 }
             }
         }
     }
 
-    private fun stopCommand() {
-        stopRequested = true
-        process?.destroy()
+    private fun stopPing() {
+        running = false
+
+        try {
+            process?.destroy()
+        } catch (_: Exception) {
+        }
+
+        appendOutput("\n> Teste interrompido pelo usuário.\n")
+
+        runButton.isEnabled = true
+        stopButton.isEnabled = false
     }
 
-    private fun updateNetworkFooter() {
-        try {
-            val manager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-            val network = manager.activeNetwork
-            val caps = network?.let { manager.getNetworkCapabilities(it) }
-            val props = network?.let { manager.getLinkProperties(it) }
-
-            val type = when {
-                caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true -> "Wi-Fi"
-                caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true -> "Móvel"
-                caps?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true -> "Ethernet"
-                caps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true -> "VPN"
-                else -> "—"
+    private fun appendOutput(message: String) {
+        runOnUiThread {
+            output.append(message)
+            scroll.post {
+                scroll.fullScroll(ScrollView.FOCUS_DOWN)
             }
-
-            val ip = props?.linkAddresses
-                ?.firstOrNull {
-                    it.address is java.net.Inet4Address &&
-                        !it.address.isLoopbackAddress
-                }?.address?.hostAddress ?: "—"
-
-            val gateway = props?.routes
-                ?.firstOrNull { it.isDefaultRoute }
-                ?.gateway?.hostAddress ?: "—"
-
-            val dns = props?.dnsServers
-                ?.firstOrNull { it is java.net.Inet4Address }
-                ?.hostAddress ?: "—"
-
-            networkFooter.text = "GW $gateway\nDNS $dns\nIP $ip   NET $type"
-        } catch (_: Exception) {
-            networkFooter.text = "Informações de rede indisponíveis."
         }
     }
 
-    private fun append(line: String) {
-        output.append("$line\n")
-        scroll.post { scroll.fullScroll(ScrollView.FOCUS_DOWN) }
+    private fun dp(value: Int): Int {
+        return (value * resources.displayMetrics.density).toInt()
     }
 
-    private fun dp(value: Int): Int =
-        (value * resources.displayMetrics.density).toInt()
-
     override fun onDestroy() {
-        process?.destroy()
+        running = false
+
+        try {
+            process?.destroy()
+        } catch (_: Exception) {
+        }
+
         executor.shutdownNow()
         super.onDestroy()
     }
