@@ -7,7 +7,6 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
 import android.view.Gravity
-import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
 import android.text.InputType
@@ -19,6 +18,7 @@ import android.widget.TextView
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.util.concurrent.Executors
+import kotlin.math.roundToInt
 
 class MainActivity : Activity() {
 
@@ -27,7 +27,6 @@ class MainActivity : Activity() {
     private val green = Color.rgb(74, 222, 128)
     private val white = Color.rgb(232, 238, 233)
     private val muted = Color.rgb(145, 160, 150)
-    private val red = Color.rgb(248, 113, 113)
 
     private lateinit var command: EditText
     private lateinit var output: TextView
@@ -58,7 +57,6 @@ class MainActivity : Activity() {
             isFocusableInTouchMode = true
         }
 
-        // Cabeçalho centralizado
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
@@ -79,10 +77,7 @@ class MainActivity : Activity() {
             textSize = 26f
             gravity = Gravity.CENTER
             setTextColor(white)
-            typeface = Typeface.create(
-                "sans-serif-medium",
-                Typeface.NORMAL
-            )
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             letterSpacing = 0.12f
         }
         header.addView(title)
@@ -122,10 +117,7 @@ class MainActivity : Activity() {
             imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_GO
         }
 
-        root.addView(
-            command,
-            LinearLayout.LayoutParams(-1, dp(54))
-        )
+        root.addView(command, LinearLayout.LayoutParams(-1, dp(54)))
 
         val buttons = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -167,7 +159,6 @@ class MainActivity : Activity() {
 
         root.addView(buttons)
 
-        // Cabeçalho do console e botão de limpar
         val consoleHeader = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -196,16 +187,10 @@ class MainActivity : Activity() {
             setPadding(dp(8), 0, dp(4), dp(2))
             isClickable = true
             isFocusable = true
-            setOnClickListener {
-                output.text = ""
-            }
+            setOnClickListener { output.text = "" }
         }
 
-        consoleHeader.addView(
-            clearButton,
-            LinearLayout.LayoutParams(dp(44), dp(40))
-        )
-
+        consoleHeader.addView(clearButton, LinearLayout.LayoutParams(dp(44), dp(40)))
         root.addView(consoleHeader)
 
         scroll = ScrollView(this).apply {
@@ -222,15 +207,9 @@ class MainActivity : Activity() {
             setLineSpacing(dp(3).toFloat(), 1f)
         }
 
-        scroll.addView(
-            output,
-            ViewGroup.LayoutParams(-1, -2)
-        )
+        scroll.addView(output, ViewGroup.LayoutParams(-1, -2))
 
-        root.addView(
-            scroll,
-            LinearLayout.LayoutParams(-1, 0, 1f)
-        )
+        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
 
         setContentView(root)
         root.requestFocus()
@@ -240,8 +219,7 @@ class MainActivity : Activity() {
         if (running) return
 
         val raw = command.text.toString().trim()
-        val parts = raw.split(Regex("\\s+"))
-            .filter { it.isNotBlank() }
+        val parts = raw.split(Regex("\\s+")).filter { it.isNotBlank() }
 
         if (parts.isEmpty()) {
             append("Informe um IP ou host.")
@@ -303,18 +281,15 @@ class MainActivity : Activity() {
             return
         }
 
-        // Fecha o teclado ao iniciar.
-        val imm = getSystemService(
-            Context.INPUT_METHOD_SERVICE
-        ) as InputMethodManager
-
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
         imm.hideSoftInputFromWindow(command.windowToken, 0)
         command.clearFocus()
 
+        // -s 32 define 32 bytes de dados ICMP, como no Windows.
         val args = mutableListOf(
             "/system/bin/ping",
-            "-W",
-            "1"
+            "-W", "1",
+            "-s", "32"
         )
 
         if (!continuous) {
@@ -327,13 +302,7 @@ class MainActivity : Activity() {
         append("")
         append("────────────────────────────")
         append("> $raw")
-        append(
-            if (continuous) {
-                "Ping contínuo para $host"
-            } else {
-                "Ping para $host ($count tentativas)"
-            }
-        )
+        append(if (continuous) "Ping contínuo para $host" else "Ping para $host ($count tentativas)")
         append("")
 
         running = true
@@ -352,15 +321,16 @@ class MainActivity : Activity() {
 
                 pingProcess = process
 
-                BufferedReader(
-                    InputStreamReader(process.inputStream)
-                ).use { reader ->
+                BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
                     while (true) {
                         val line = reader.readLine() ?: break
                         capturedLines.add(line)
 
-                        runOnUiThread {
-                            append(line)
+                        val formatted = formatPingLine(line, host)
+                        if (formatted != null) {
+                            runOnUiThread { append(formatted) }
+                        } else if (isErrorLine(line)) {
+                            runOnUiThread { append(line) }
                         }
                     }
                 }
@@ -369,7 +339,7 @@ class MainActivity : Activity() {
 
                 runOnUiThread {
                     append("")
-                    append("──────── RESUMO ────────")
+                    append("Estatísticas do Ping para $host:")
                     appendSummary(capturedLines)
                     append(
                         when {
@@ -378,7 +348,7 @@ class MainActivity : Activity() {
                             else -> "Finalizado (código $exitCode)."
                         }
                     )
-                    append("────────────────────────")
+                    append("────────────────────────────")
                 }
             } catch (e: Exception) {
                 runOnUiThread {
@@ -398,51 +368,65 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun formatPingLine(line: String, host: String): String? {
+        // Exemplo Linux: 64 bytes from 172.16.1.1: icmp_seq=1 ttl=61 time=8.602 ms
+        val match = Regex(
+            """(\d+)\s+bytes from\s+([^: ]+):.*?ttl[= ](\d+).*?time[=<]([\d.]+)\s*ms""",
+            RegexOption.IGNORE_CASE
+        ).find(line) ?: return null
+
+        val address = match.groupValues[2]
+        val ttl = match.groupValues[3]
+        val time = match.groupValues[4].toDoubleOrNull()?.roundToInt() ?: 0
+
+        return "Resposta de $address: bytes=32 tempo=${time}ms TTL=$ttl"
+    }
+
+    private fun isErrorLine(line: String): Boolean {
+        val lower = line.lowercase()
+        return lower.contains("unknown host") ||
+            lower.contains("cannot resolve") ||
+            lower.contains("network is unreachable") ||
+            lower.contains("destination host unreachable") ||
+            lower.contains("operation not permitted") ||
+            lower.contains("100% packet loss") ||
+            lower.contains("name or service not known") ||
+            lower.contains("bad address")
+    }
+
     private fun appendSummary(lines: List<String>) {
         val packetLine = lines.firstOrNull {
             it.contains("packets transmitted") ||
                 it.contains("pacotes transmitidos")
         }
 
-        if (packetLine != null) {
-            val transmitted = Regex("""(\d+)\s+packets transmitted""")
-                .find(packetLine)?.groupValues?.get(1)
-                ?: Regex("""(\d+)\s+pacotes transmitidos""")
-                    .find(packetLine)?.groupValues?.get(1)
+        val transmitted = packetLine?.let {
+            Regex("""(\d+)\s+packets transmitted""").find(it)?.groupValues?.get(1)?.toIntOrNull()
+        } ?: lines.count { formatPingLine(it, "") != null }
 
-            val received = Regex("""(\d+)\s+(?:packets )?received""")
-                .find(packetLine)?.groupValues?.get(1)
-                ?: Regex("""(\d+)\s+recebidos?""")
-                    .find(packetLine)?.groupValues?.get(1)
-
-            val loss = Regex("""([\d.]+)%\s*packet loss""")
-                .find(packetLine)?.groupValues?.get(1)
-                ?: Regex("""([\d.]+)%\s+de perda""")
-                    .find(packetLine)?.groupValues?.get(1)
-
-            if (transmitted != null) append("Enviados: $transmitted")
-            if (received != null) append("Recebidos: $received")
-            if (loss != null) append("Perda: $loss%")
+        val received = lines.count { formatPingLine(it, "") != null }
+        val lost = (transmitted - received).coerceAtLeast(0)
+        val lossPercent = if (transmitted > 0) {
+            ((lost * 100.0) / transmitted).roundToInt()
+        } else {
+            0
         }
 
-        val latencyLine = lines.firstOrNull {
-            it.contains("min/avg/max") ||
-                it.contains("round-trip")
+        append("    Pacotes: Enviados = $transmitted, Recebidos = $received, Perdidos = $lost (${lossPercent}% de perda),")
+
+        val times = lines.mapNotNull { line ->
+            Regex("""time[=<]([\d.]+)\s*ms""", RegexOption.IGNORE_CASE)
+                .find(line)?.groupValues?.get(1)?.toDoubleOrNull()
         }
 
-        if (latencyLine != null) {
-            val values = Regex("""=\s*([\d.]+)/([\d.]+)/([\d.]+)""")
-                .find(latencyLine)
+        if (times.isNotEmpty()) {
+            val min = times.minOrNull()!!.roundToInt()
+            val max = times.maxOrNull()!!.roundToInt()
+            val avg = (times.average()).roundToInt()
 
-            if (values != null) {
-                append("Mínima: ${values.groupValues[1]} ms")
-                append("Média: ${values.groupValues[2]} ms")
-                append("Máxima: ${values.groupValues[3]} ms")
-            }
-        }
-
-        if (packetLine == null && latencyLine == null) {
-            append("Resumo estatístico indisponível.")
+            append("    Mínimo = ${min}ms, Máximo = ${max}ms, Média = ${avg}ms")
+        } else if (received == 0) {
+            append("    Nenhuma resposta recebida.")
         }
     }
 
@@ -458,9 +442,7 @@ class MainActivity : Activity() {
 
     private fun append(line: String) {
         output.append("$line\n")
-        scroll.post {
-            scroll.fullScroll(ScrollView.FOCUS_DOWN)
-        }
+        scroll.post { scroll.fullScroll(ScrollView.FOCUS_DOWN) }
     }
 
     private fun dp(value: Int): Int =
