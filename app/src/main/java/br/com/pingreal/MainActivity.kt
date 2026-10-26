@@ -9,11 +9,11 @@ import android.net.ConnectivityManager
 import android.net.LinkProperties
 import android.net.NetworkCapabilities
 import android.os.Bundle
-import android.view.Gravity
-import android.view.View
-import android.view.ViewGroup
-import android.view.inputmethod.InputMethodManager
 import android.text.InputType
+import android.view.Gravity
+import android.view.ViewGroup
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -31,7 +31,6 @@ class MainActivity : Activity() {
     private val green = Color.rgb(74, 222, 128)
     private val white = Color.rgb(232, 238, 233)
     private val muted = Color.rgb(145, 160, 150)
-    private val red = Color.rgb(248, 113, 113)
 
     private lateinit var root: LinearLayout
     private lateinit var content: LinearLayout
@@ -46,7 +45,6 @@ class MainActivity : Activity() {
     @Volatile private var pingProcess: Process? = null
     @Volatile private var running = false
     @Volatile private var stopRequested = false
-    @Volatile private var activeHost = ""
     @Volatile private var pingStartedAt = 0L
 
     private val executor = Executors.newSingleThreadExecutor()
@@ -164,7 +162,7 @@ class MainActivity : Activity() {
             typeface = Typeface.MONOSPACE
             inputType = InputType.TYPE_CLASS_TEXT or
                 InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_GO
+            imeOptions = EditorInfo.IME_ACTION_GO
         }
 
         content.addView(command, LinearLayout.LayoutParams(-1, dp(52)))
@@ -279,13 +277,16 @@ class MainActivity : Activity() {
             setBackgroundColor(green)
             setTextColor(Color.rgb(5, 20, 10))
             typeface = Typeface.DEFAULT_BOLD
-            setOnClickListener { details.text = getNetworkDetails() }
+            setOnClickListener {
+                details.text = getNetworkDetails()
+            }
         }
 
         content.addView(refresh, LinearLayout.LayoutParams(-1, dp(48)))
         content.addView(details, LinearLayout.LayoutParams(-1, 0, 1f).apply {
             topMargin = dp(12)
         })
+
         details.text = getNetworkDetails()
     }
 
@@ -310,17 +311,22 @@ class MainActivity : Activity() {
             ?.joinToString("\n")
             ?.ifBlank { "Não disponível" } ?: "Não disponível"
 
+        // Rota padrão: destino com prefixo zero.
         val gateways = props?.routes
-            ?.filter { it.isDefault }
+            ?.filter { route ->
+                route.destination.prefixLength == 0
+            }
             ?.mapNotNull { it.gateway?.hostAddress }
             ?.distinct()
             ?.joinToString("\n")
-            ?.ifBlank { "Não informado pelo Android" } ?: "Não informado pelo Android"
+            ?.ifBlank { "Não informado pelo Android" }
+            ?: "Não informado pelo Android"
 
         val dns = props?.dnsServers
             ?.mapNotNull { it.hostAddress }
             ?.joinToString("\n")
-            ?.ifBlank { "Não informado pelo Android" } ?: "Não informado pelo Android"
+            ?.ifBlank { "Não informado pelo Android" }
+            ?: "Não informado pelo Android"
 
         val internet = when {
             caps == null -> "Não foi possível determinar"
@@ -351,7 +357,7 @@ Observação:
 Estas informações descrevem a rede ativa.
 Elas não garantem que um servidor específico
 esteja acessível.
-        """.trim()
+        """.trimIndent()
     }
 
     private fun startPing() {
@@ -366,7 +372,9 @@ esteja acessível.
         }
 
         val host = parts[0]
-        if (host.startsWith("-") || !host.matches(Regex("[A-Za-z0-9._:-]+"))) {
+        if (host.startsWith("-") ||
+            !host.matches(Regex("[A-Za-z0-9._:%-]+"))
+        ) {
             append("Endereço inválido.")
             return
         }
@@ -386,20 +394,24 @@ esteja acessível.
                     continuous = true
                     index++
                 }
+
                 "-n", "-c" -> {
                     if (countSpecified || index + 1 >= parts.size) {
                         append("Quantidade inválida.")
                         return
                     }
+
                     val parsed = parts[index + 1].toIntOrNull()
                     if (parsed == null || parsed !in 1..10000) {
                         append("Quantidade deve estar entre 1 e 10000.")
                         return
                     }
+
                     count = parsed
                     countSpecified = true
                     index += 2
                 }
+
                 else -> {
                     append("Parâmetro desconhecido: ${parts[index]}")
                     return
@@ -416,22 +428,30 @@ esteja acessível.
         imm.hideSoftInputFromWindow(command.windowToken, 0)
         command.clearFocus()
 
-        val args = mutableListOf("/system/bin/ping", "-W", "1", "-s", "32")
+        val args = mutableListOf(
+            "/system/bin/ping",
+            "-W", "1",
+            "-s", "32"
+        )
+
         if (!continuous) {
             args.add("-c")
             args.add(count.toString())
         }
+
         args.add(host)
 
         append("")
         append("────────────────────────────")
         append("> $raw")
-        append(if (continuous) "Ping contínuo para $host" else "Ping para $host ($count tentativas)")
+        append(
+            if (continuous) "Ping contínuo para $host"
+            else "Ping para $host ($count tentativas)"
+        )
         append("")
 
         running = true
         stopRequested = false
-        activeHost = host
         pingStartedAt = System.currentTimeMillis()
         runButton.isEnabled = false
         stopButton.isEnabled = true
@@ -442,25 +462,38 @@ esteja acessível.
             var readError: String? = null
 
             try {
-                process = ProcessBuilder(args).redirectErrorStream(true).start()
+                process = ProcessBuilder(args)
+                    .redirectErrorStream(true)
+                    .start()
+
                 pingProcess = process
 
                 try {
                     BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
                         while (true) {
                             val line = reader.readLine() ?: break
-                            synchronized(capturedLines) { capturedLines.add(line) }
+
+                            synchronized(capturedLines) {
+                                capturedLines.add(line)
+                            }
 
                             val formatted = formatPingLine(line)
+
                             if (formatted != null) {
-                                runOnUiThread { append(formatted) }
+                                runOnUiThread {
+                                    if (!isFinishing && !isDestroyed) append(formatted)
+                                }
                             } else if (isErrorLine(line)) {
-                                runOnUiThread { append(line) }
+                                runOnUiThread {
+                                    if (!isFinishing && !isDestroyed) append(line)
+                                }
                             }
                         }
                     }
                 } catch (e: Exception) {
-                    if (!stopRequested) readError = e.message
+                    if (!stopRequested) {
+                        readError = e.message ?: "falha ao ler a saída do ping"
+                    }
                 }
 
                 try {
@@ -469,27 +502,35 @@ esteja acessível.
                     Thread.currentThread().interrupt()
                 }
             } catch (e: Exception) {
-                if (!stopRequested) readError = e.message ?: "falha ao executar ping"
+                if (!stopRequested) {
+                    readError = e.message ?: "falha ao executar ping"
+                }
             } finally {
-                val snapshot = synchronized(capturedLines) { capturedLines.toList() }
+                val snapshot = synchronized(capturedLines) {
+                    capturedLines.toList()
+                }
 
                 runOnUiThread {
-                    append("")
-                    append("Estatísticas do Ping para $host:")
-                    appendSummary(snapshot, continuous, count)
+                    if (!isFinishing && !isDestroyed) {
+                        append("")
+                        append("Estatísticas do Ping para $host:")
+                        appendSummary(snapshot, continuous, count)
 
-                    if (stopRequested) {
-                        append("Interrompido pelo usuário.")
-                    } else if (readError != null) {
-                        append("Erro: $readError")
-                    } else {
-                        append("Concluído.")
+                        if (stopRequested) {
+                            append("Interrompido pelo usuário.")
+                        } else if (readError != null) {
+                            append("Erro: $readError")
+                        } else {
+                            append("Concluído.")
+                        }
+
+                        append("────────────────────────────")
                     }
-                    append("────────────────────────────")
                 }
 
                 pingProcess = null
                 running = false
+
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed) {
                         runButton.isEnabled = true
@@ -500,21 +541,35 @@ esteja acessível.
         }
     }
 
-    private fun formatPingLine(line: String): String? {
+    private data class PingReply(
+        val address: String,
+        val ttl: String,
+        val timeMs: Double
+    )
+
+    private fun parseReply(line: String): PingReply? {
+        // Exemplo: 64 bytes from 192.168.1.1: icmp_seq=1 ttl=64 time=2.34 ms
         val match = Regex(
-            """(\d+)\s+bytes from\s+([^: ]+):.*?ttl[= ](\d+).*?time[=<]([\d.]+)\s*ms""",
+            """(\d+)\s+bytes from\s+(.+?):.*?\bttl[= ](\d+).*?\btime[=<]([\d.]+)\s*ms""",
             RegexOption.IGNORE_CASE
         ).find(line) ?: return null
 
-        val address = match.groupValues[2]
+        val address = match.groupValues[2].trim().removeSuffix(":")
         val ttl = match.groupValues[3]
-        val time = match.groupValues[4].toDoubleOrNull()?.roundToInt() ?: 0
+        val time = match.groupValues[4].toDoubleOrNull() ?: return null
 
-        return "Resposta de $address: bytes=32 tempo=${time}ms TTL=$ttl"
+        return PingReply(address, ttl, time)
+    }
+
+    private fun formatPingLine(line: String): String? {
+        val reply = parseReply(line) ?: return null
+
+        return "Resposta de ${reply.address}: bytes=32 tempo=${reply.timeMs.roundToInt()}ms TTL=${reply.ttl}"
     }
 
     private fun isErrorLine(line: String): Boolean {
         val lower = line.lowercase()
+
         return lower.contains("unknown host") ||
             lower.contains("cannot resolve") ||
             lower.contains("network is unreachable") ||
@@ -522,30 +577,40 @@ esteja acessível.
             lower.contains("operation not permitted") ||
             lower.contains("name or service not known") ||
             lower.contains("bad address") ||
-            lower.contains("100% packet loss")
+            lower.contains("100% packet loss") ||
+            lower.contains("connect:") ||
+            lower.contains("ping:")
     }
 
-    private fun appendSummary(lines: List<String>, continuous: Boolean, requestedCount: Int) {
-        val replies = lines.mapNotNull { line ->
-            val match = Regex(
-                """(\d+)\s+bytes from\s+([^: ]+):.*?ttl[= ](\d+).*?time[=<]([\d.]+)\s*ms""",
-                RegexOption.IGNORE_CASE
-            ).find(line)
-            match?.groupValues?.get(4)?.toDoubleOrNull()
+    private fun appendSummary(
+        lines: List<String>,
+        continuous: Boolean,
+        requestedCount: Int
+    ) {
+        val replies = lines.mapNotNull { parseReply(it)?.timeMs }
+
+        val nativeSummary = lines.firstOrNull {
+            it.contains("packets transmitted")
         }
 
-        val nativeSummary = lines.firstOrNull { it.contains("packets transmitted") }
         val nativeSent = nativeSummary?.let {
-            Regex("""(\d+)\s+packets transmitted""").find(it)?.groupValues?.get(1)?.toIntOrNull()
+            Regex("""(\d+)\s+packets transmitted""")
+                .find(it)
+                ?.groupValues
+                ?.get(1)
+                ?.toIntOrNull()
         }
 
         val sent = when {
             nativeSent != null -> nativeSent
-            !continuous -> requestedCount
-            stopRequested -> {
-                val elapsed = (System.currentTimeMillis() - pingStartedAt).coerceAtLeast(0)
-                // O ping nativo normalmente envia aproximadamente um pacote por segundo.
-                // É uma estimativa quando o processo é interrompido antes do resumo nativo.
+            !continuous && !stopRequested -> requestedCount
+            stopRequested && continuous -> {
+                val elapsed = (
+                    System.currentTimeMillis() - pingStartedAt
+                ).coerceAtLeast(0)
+
+                // Estimativa: o ping nativo costuma enviar aproximadamente
+                // um pacote por segundo quando não há resposta.
                 maxOf(replies.size, (elapsed / 1000L).toInt())
             }
             else -> replies.size
@@ -553,12 +618,19 @@ esteja acessível.
 
         val received = replies.size
         val lost = (sent - received).coerceAtLeast(0)
-        val loss = if (sent > 0) ((lost * 100.0) / sent).roundToInt() else 0
+        val loss = if (sent > 0) {
+            ((lost * 100.0) / sent).roundToInt()
+        } else {
+            0
+        }
 
-        append("    Pacotes: Enviados = $sent, Recebidos = $received, Perdidos = $lost (${loss}% de perda),")
+        append(
+            "    Pacotes: Enviados = $sent, Recebidos = $received, " +
+                "Perdidos = $lost (${loss}% de perda),"
+        )
 
         if (stopRequested && nativeSent == null && continuous) {
-            append("    Nota: enviados é uma estimativa após a interrupção.")
+            append("    Nota: quantidade enviada é uma estimativa após a interrupção.")
         }
 
         if (replies.isNotEmpty()) {
@@ -581,7 +653,9 @@ esteja acessível.
 
     private fun append(line: String) {
         output.append("$line\n")
-        scroll.post { scroll.fullScroll(ScrollView.FOCUS_DOWN) }
+        scroll.post {
+            scroll.fullScroll(ScrollView.FOCUS_DOWN)
+        }
     }
 
     private fun dp(value: Int): Int =
