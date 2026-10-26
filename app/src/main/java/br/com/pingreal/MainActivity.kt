@@ -5,6 +5,7 @@ import android.app.Activity
 import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
+import android.text.InputType
 import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.Button
@@ -41,10 +42,6 @@ class MainActivity : Activity() {
         window.navigationBarColor = bg
 
         buildUi()
-
-        append("PING REAL")
-        append("Pronto para testar a conexão.")
-        append("----------------------------------------")
     }
 
     private fun buildUi() {
@@ -54,27 +51,22 @@ class MainActivity : Activity() {
             setBackgroundColor(bg)
         }
 
-        // Cabeçalho com espaçamento próprio
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(4), 0, dp(22))
+            setPadding(0, dp(8), 0, dp(26))
         }
 
         val title = TextView(this).apply {
             text = "PING REAL"
             textSize = 25f
             setTextColor(green)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            includeFontPadding = true
-        }
-        header.addView(
-            title,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
+            typeface = Typeface.create(
+                "sans-serif-medium",
+                Typeface.NORMAL
             )
-        )
+        }
+        header.addView(title)
 
         val subtitle = TextView(this).apply {
             text = "Teste de conectividade de rede"
@@ -82,18 +74,11 @@ class MainActivity : Activity() {
             setTextColor(muted)
             setPadding(0, dp(5), 0, 0)
         }
-        header.addView(
-            subtitle,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        )
-
+        header.addView(subtitle)
         root.addView(header)
 
         val inputLabel = TextView(this).apply {
-            text = "ENDEREÇO IP"
+            text = "ENDEREÇO"
             textSize = 12f
             setTextColor(muted)
             typeface = Typeface.DEFAULT_BOLD
@@ -107,38 +92,27 @@ class MainActivity : Activity() {
             textSize = 16f
             setTextColor(white)
             setHintTextColor(muted)
-            hint = "Ex.: 172.16.1.1 -t"
+            hint = "IP ou host -n 20"
             setPadding(dp(14), dp(12), dp(14), dp(12))
             setBackgroundColor(panel)
             typeface = Typeface.MONOSPACE
-            inputType = android.text.InputType.TYPE_CLASS_TEXT or
-                android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            inputType = InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         }
 
         root.addView(
             command,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(54)
-            )
+            LinearLayout.LayoutParams(-1, dp(54))
         )
-
-        val help = TextView(this).apply {
-            text = "IP • -t contínuo • -n 10 para 10 tentativas"
-            textSize = 12f
-            setTextColor(muted)
-            setPadding(0, dp(8), 0, dp(14))
-        }
-        root.addView(help)
 
         val buttons = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(14), 0, dp(8))
         }
 
         runButton = Button(this).apply {
-            text = "INICIAR PING"
-            textSize = 14f
+            text = "INICIAR"
             setTextColor(Color.rgb(5, 20, 10))
             setBackgroundColor(green)
             isAllCaps = false
@@ -152,7 +126,6 @@ class MainActivity : Activity() {
 
         val stopButton = Button(this).apply {
             text = "PARAR"
-            textSize = 14f
             setTextColor(white)
             setBackgroundColor(Color.rgb(65, 37, 37))
             isAllCaps = false
@@ -162,28 +135,47 @@ class MainActivity : Activity() {
         buttons.addView(
             stopButton,
             LinearLayout.LayoutParams(0, dp(48), 1f).apply {
-                marginStart = dp(10)
+                marginStart = dp(8)
             }
         )
 
-        root.addView(
-            buttons,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = dp(18)
-            }
-        )
+        root.addView(buttons)
 
-        val outputTitle = TextView(this).apply {
-            text = "RESULTADOS"
+        val consoleHeader = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(12), 0, dp(8))
+        }
+
+        val consoleTitle = TextView(this).apply {
+            text = "CONSOLE"
             textSize = 12f
             setTextColor(green)
             typeface = Typeface.DEFAULT_BOLD
-            setPadding(0, 0, 0, dp(8))
         }
-        root.addView(outputTitle)
+
+        consoleHeader.addView(
+            consoleTitle,
+            LinearLayout.LayoutParams(0, -2, 1f)
+        )
+
+        val clearButton = Button(this).apply {
+            text = "LIMPAR"
+            textSize = 12f
+            setTextColor(white)
+            setBackgroundColor(panel)
+            isAllCaps = false
+            setOnClickListener {
+                output.text = ""
+            }
+        }
+
+        consoleHeader.addView(
+            clearButton,
+            LinearLayout.LayoutParams(-2, dp(40))
+        )
+
+        root.addView(consoleHeader)
 
         scroll = ScrollView(this).apply {
             setBackgroundColor(Color.rgb(3, 6, 4))
@@ -201,19 +193,12 @@ class MainActivity : Activity() {
 
         scroll.addView(
             output,
-            ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
+            ViewGroup.LayoutParams(-1, -2)
         )
 
         root.addView(
             scroll,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                0,
-                1f
-            )
+            LinearLayout.LayoutParams(-1, 0, 1f)
         )
 
         setContentView(root)
@@ -223,10 +208,11 @@ class MainActivity : Activity() {
         if (running) return
 
         val raw = command.text.toString().trim()
-        val parts = raw.split(Regex("\\s+")).filter { it.isNotBlank() }
+        val parts = raw.split(Regex("\\s+"))
+            .filter { it.isNotBlank() }
 
         if (parts.isEmpty()) {
-            append("Digite um endereço IP ou nome de host.")
+            append("Informe um IP ou host.")
             return
         }
 
@@ -235,54 +221,60 @@ class MainActivity : Activity() {
         if (host.startsWith("-") ||
             !host.matches(Regex("[A-Za-z0-9._:-]+"))
         ) {
-            append("Endereço inválido. Ex.: 172.16.1.1")
+            append("Endereço inválido.")
             return
         }
 
         var continuous = false
         var count = 4
         var countSpecified = false
-        var i = 1
+        var index = 1
 
-        while (i < parts.size) {
-            when (parts[i].lowercase()) {
+        while (index < parts.size) {
+            when (parts[index].lowercase()) {
                 "-t" -> {
                     continuous = true
-                    i++
+                    index++
                 }
 
                 "-n", "-c" -> {
-                    if (i + 1 >= parts.size) {
-                        append("Informe a quantidade. Ex.: $host -n 10")
+                    if (countSpecified || index + 1 >= parts.size) {
+                        append("Parâmetro de quantidade inválido.")
                         return
                     }
 
-                    val value = parts[i + 1].toIntOrNull()
+                    val parsedCount =
+                        parts[index + 1].toIntOrNull()
 
-                    if (value == null || value !in 1..10000) {
-                        append("A quantidade deve estar entre 1 e 10000.")
+                    if (parsedCount == null ||
+                        parsedCount !in 1..10000
+                    ) {
+                        append("Quantidade inválida.")
                         return
                     }
 
-                    count = value
+                    count = parsedCount
                     countSpecified = true
-                    i += 2
+                    index += 2
                 }
 
                 else -> {
-                    append("Opção desconhecida: ${parts[i]}")
-                    append("Use apenas o IP, -t ou -n quantidade.")
+                    append("Parâmetro desconhecido: ${parts[index]}")
                     return
                 }
             }
         }
 
         if (continuous && countSpecified) {
-            append("Use -t para contínuo ou -n quantidade para tentativas limitadas.")
+            append("Use -t ou -n quantidade.")
             return
         }
 
-        val args = mutableListOf("/system/bin/ping", "-W", "1")
+        val args = mutableListOf(
+            "/system/bin/ping",
+            "-W",
+            "1"
+        )
 
         if (!continuous) {
             args.add("-c")
@@ -292,12 +284,12 @@ class MainActivity : Activity() {
         args.add(host)
 
         append("")
-        append("> ping $raw")
+        append("> $raw")
         append(
             if (continuous) {
-                "Ping contínuo para $host. Pressione PARAR para interromper."
+                "Ping contínuo: $host"
             } else {
-                "Enviando $count tentativas para $host..."
+                "Ping: $host ($count tentativas)"
             }
         )
 
@@ -319,19 +311,20 @@ class MainActivity : Activity() {
                 ).use { reader ->
                     while (true) {
                         val line = reader.readLine() ?: break
-                        runOnUiThread { append(line) }
+                        runOnUiThread {
+                            append(line)
+                        }
                     }
                 }
 
                 val exitCode = process.waitFor()
 
                 runOnUiThread {
-                    append("Ping encerrado (código $exitCode).")
+                    append("Finalizado (código $exitCode).")
                 }
             } catch (e: Exception) {
                 runOnUiThread {
-                    append("Erro ao executar ping: ${e.message ?: e.javaClass.simpleName}")
-                    append("Verifique se /system/bin/ping está disponível neste Android.")
+                    append("Erro: ${e.message ?: "falha ao executar ping"}")
                 }
             } finally {
                 pingProcess = null
@@ -350,18 +343,16 @@ class MainActivity : Activity() {
         val process = pingProcess
 
         if (process != null) {
-            append("Solicitando interrupção do ping...")
             process.destroy()
-        } else if (running) {
-            append("Aguardando o processo de ping iniciar para interrompê-lo.")
-        } else {
-            append("Nenhum ping em execução.")
+            append("Ping interrompido.")
         }
     }
 
     private fun append(line: String) {
         output.append("$line\n")
-        scroll.post { scroll.fullScroll(ScrollView.FOCUS_DOWN) }
+        scroll.post {
+            scroll.fullScroll(ScrollView.FOCUS_DOWN)
+        }
     }
 
     private fun dp(value: Int): Int =
