@@ -17,10 +17,12 @@ import java.io.InputStreamReader
 import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
-    private val bg = Color.rgb(8, 11, 10)
+
+    private val bg = Color.rgb(8, 12, 10)
+    private val panel = Color.rgb(20, 28, 23)
     private val green = Color.rgb(74, 222, 128)
-    private val white = Color.rgb(224, 231, 226)
-    private val muted = Color.rgb(137, 153, 143)
+    private val white = Color.rgb(232, 238, 233)
+    private val muted = Color.rgb(145, 160, 150)
 
     private lateinit var command: EditText
     private lateinit var output: TextView
@@ -28,85 +30,160 @@ class MainActivity : Activity() {
     private lateinit var runButton: Button
 
     @Volatile private var pingProcess: Process? = null
-    private val executor = Executors.newSingleThreadExecutor()
     @Volatile private var running = false
+
+    private val executor = Executors.newSingleThreadExecutor()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         window.statusBarColor = bg
         window.navigationBarColor = bg
+
         buildUi()
 
-        append("PING REAL / ANDROID")
-        append("Digite: ping 172.16.1.1")
-        append("Para manter contínuo: ping 172.16.1.1 -t")
+        append("PING REAL")
+        append("Pronto para testar a conexão.")
         append("----------------------------------------")
     }
 
     private fun buildUi() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(16), dp(16), dp(12))
+            setPadding(dp(18), dp(22), dp(18), dp(14))
             setBackgroundColor(bg)
+        }
+
+        // Cabeçalho com espaçamento próprio
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(4), 0, dp(22))
         }
 
         val title = TextView(this).apply {
             text = "PING REAL"
-            textSize = 22f
+            textSize = 25f
             setTextColor(green)
-            typeface = Typeface.MONOSPACE
-            setTypeface(typeface, Typeface.BOLD)
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            includeFontPadding = true
         }
-        root.addView(title, LinearLayout.LayoutParams(-1, -2))
+        header.addView(
+            title,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
 
         val subtitle = TextView(this).apply {
-            text = "Teste de conectividade • execução local"
+            text = "Teste de conectividade de rede"
+            textSize = 14f
+            setTextColor(muted)
+            setPadding(0, dp(5), 0, 0)
+        }
+        header.addView(
+            subtitle,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
+
+        root.addView(header)
+
+        val inputLabel = TextView(this).apply {
+            text = "ENDEREÇO IP"
             textSize = 12f
             setTextColor(muted)
-            setPadding(0, dp(4), 0, dp(14))
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, 0, 0, dp(8))
         }
-        root.addView(subtitle)
+        root.addView(inputLabel)
 
         command = EditText(this).apply {
             setSingleLine(true)
-            setText("ping 172.16.1.1")
-            textSize = 14f
+            setText("172.16.1.1")
+            textSize = 16f
             setTextColor(white)
             setHintTextColor(muted)
-            setHint("ping endereço -t")
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-            setBackgroundColor(Color.rgb(20, 27, 23))
+            hint = "Ex.: 172.16.1.1 -t"
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            setBackgroundColor(panel)
             typeface = Typeface.MONOSPACE
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         }
-        root.addView(command, LinearLayout.LayoutParams(-1, dp(52)))
+
+        root.addView(
+            command,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(54)
+            )
+        )
+
+        val help = TextView(this).apply {
+            text = "IP • -t contínuo • -n 10 para 10 tentativas"
+            textSize = 12f
+            setTextColor(muted)
+            setPadding(0, dp(8), 0, dp(14))
+        }
+        root.addView(help)
 
         val buttons = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(10), 0, dp(10))
         }
 
         runButton = Button(this).apply {
-            text = "EXECUTAR"
-            setTextColor(Color.BLACK)
+            text = "INICIAR PING"
+            textSize = 14f
+            setTextColor(Color.rgb(5, 20, 10))
             setBackgroundColor(green)
             isAllCaps = false
             setOnClickListener { startPing() }
         }
-        buttons.addView(runButton, LinearLayout.LayoutParams(0, dp(48), 1f))
+
+        buttons.addView(
+            runButton,
+            LinearLayout.LayoutParams(0, dp(48), 1f)
+        )
 
         val stopButton = Button(this).apply {
             text = "PARAR"
+            textSize = 14f
             setTextColor(white)
-            setBackgroundColor(Color.rgb(73, 35, 35))
+            setBackgroundColor(Color.rgb(65, 37, 37))
             isAllCaps = false
             setOnClickListener { stopPing() }
         }
-        val stopParams = LinearLayout.LayoutParams(0, dp(48), 1f).apply {
-            marginStart = dp(8)
+
+        buttons.addView(
+            stopButton,
+            LinearLayout.LayoutParams(0, dp(48), 1f).apply {
+                marginStart = dp(10)
+            }
+        )
+
+        root.addView(
+            buttons,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dp(18)
+            }
+        )
+
+        val outputTitle = TextView(this).apply {
+            text = "RESULTADOS"
+            textSize = 12f
+            setTextColor(green)
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, 0, 0, dp(8))
         }
-        buttons.addView(stopButton, stopParams)
-        root.addView(buttons)
+        root.addView(outputTitle)
 
         scroll = ScrollView(this).apply {
             setBackgroundColor(Color.rgb(3, 6, 4))
@@ -119,6 +196,7 @@ class MainActivity : Activity() {
             typeface = Typeface.MONOSPACE
             setPadding(dp(12), dp(12), dp(12), dp(12))
             setTextIsSelectable(true)
+            setLineSpacing(dp(2).toFloat(), 1f)
         }
 
         scroll.addView(
@@ -128,7 +206,16 @@ class MainActivity : Activity() {
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
         )
-        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        root.addView(
+            scroll,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+        )
+
         setContentView(root)
     }
 
@@ -138,35 +225,80 @@ class MainActivity : Activity() {
         val raw = command.text.toString().trim()
         val parts = raw.split(Regex("\\s+")).filter { it.isNotBlank() }
 
-        if (parts.isEmpty() || !parts[0].equals("ping", true)) {
-            append("Erro: use o formato ping ENDEREÇO [-t]")
+        if (parts.isEmpty()) {
+            append("Digite um endereço IP ou nome de host.")
             return
         }
 
-        val host = parts.drop(1).firstOrNull { !it.startsWith("-") }
+        val host = parts[0]
 
-        if (host.isNullOrBlank() ||
+        if (host.startsWith("-") ||
             !host.matches(Regex("[A-Za-z0-9._:-]+"))
         ) {
-            append("Erro: endereço IP ou nome de host inválido.")
+            append("Endereço inválido. Ex.: 172.16.1.1")
             return
         }
 
-        val continuous = parts.any { it.equals("-t", true) }
+        var continuous = false
+        var count = 4
+        var countSpecified = false
+        var i = 1
+
+        while (i < parts.size) {
+            when (parts[i].lowercase()) {
+                "-t" -> {
+                    continuous = true
+                    i++
+                }
+
+                "-n", "-c" -> {
+                    if (i + 1 >= parts.size) {
+                        append("Informe a quantidade. Ex.: $host -n 10")
+                        return
+                    }
+
+                    val value = parts[i + 1].toIntOrNull()
+
+                    if (value == null || value !in 1..10000) {
+                        append("A quantidade deve estar entre 1 e 10000.")
+                        return
+                    }
+
+                    count = value
+                    countSpecified = true
+                    i += 2
+                }
+
+                else -> {
+                    append("Opção desconhecida: ${parts[i]}")
+                    append("Use apenas o IP, -t ou -n quantidade.")
+                    return
+                }
+            }
+        }
+
+        if (continuous && countSpecified) {
+            append("Use -t para contínuo ou -n quantidade para tentativas limitadas.")
+            return
+        }
+
         val args = mutableListOf("/system/bin/ping", "-W", "1")
 
         if (!continuous) {
             args.add("-c")
-            args.add("4")
+            args.add(count.toString())
         }
 
         args.add(host)
 
         append("")
-        append("> $raw")
+        append("> ping $raw")
         append(
-            "Executando ping real para $host" +
-                if (continuous) " (contínuo; pressione PARAR)" else " (4 tentativas)"
+            if (continuous) {
+                "Ping contínuo para $host. Pressione PARAR para interromper."
+            } else {
+                "Enviando $count tentativas para $host..."
+            }
         )
 
         running = true
@@ -182,25 +314,29 @@ class MainActivity : Activity() {
 
                 pingProcess = process
 
-                BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
+                BufferedReader(
+                    InputStreamReader(process.inputStream)
+                ).use { reader ->
                     while (true) {
                         val line = reader.readLine() ?: break
                         runOnUiThread { append(line) }
                     }
                 }
 
-                val code = process.waitFor()
+                val exitCode = process.waitFor()
+
                 runOnUiThread {
-                    append("Processo encerrado (código $code).")
+                    append("Ping encerrado (código $exitCode).")
                 }
             } catch (e: Exception) {
                 runOnUiThread {
-                    append("Falha ao executar ping: ${e.message ?: e.javaClass.simpleName}")
-                    append("Este Android pode não disponibilizar /system/bin/ping.")
+                    append("Erro ao executar ping: ${e.message ?: e.javaClass.simpleName}")
+                    append("Verifique se /system/bin/ping está disponível neste Android.")
                 }
             } finally {
                 pingProcess = null
                 running = false
+
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed) {
                         runButton.isEnabled = true
@@ -214,10 +350,10 @@ class MainActivity : Activity() {
         val process = pingProcess
 
         if (process != null) {
-            append("Interrompendo ping...")
+            append("Solicitando interrupção do ping...")
             process.destroy()
         } else if (running) {
-            append("Solicitando interrupção do ping...")
+            append("Aguardando o processo de ping iniciar para interrompê-lo.")
         } else {
             append("Nenhum ping em execução.")
         }
