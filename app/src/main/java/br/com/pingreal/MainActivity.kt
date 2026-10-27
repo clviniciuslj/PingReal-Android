@@ -126,7 +126,7 @@ class MainActivity : Activity() {
             setPadding(dp(12), dp(12), dp(12), dp(12))
             setTextIsSelectable(true)
         }
-        scroll.addView(output, ScrollView.LayoutParams(-1, -2))
+        scroll.addView(output, ViewGroup.LayoutParams(-1, -2))
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(root)
     }
