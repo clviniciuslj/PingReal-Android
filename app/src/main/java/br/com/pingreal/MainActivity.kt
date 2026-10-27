@@ -21,7 +21,6 @@ import android.widget.ScrollView
 import android.widget.TextView
 import java.io.BufferedReader
 import java.io.InputStreamReader
-import java.net.InetAddress
 import java.util.concurrent.Executors
 import kotlin.math.roundToInt
 
@@ -41,7 +40,6 @@ class MainActivity : Activity() {
     private lateinit var runButton: Button
     private lateinit var stopButton: Button
     private lateinit var traceButton: Button
-    private lateinit var dnsButton: Button
     private lateinit var networkFooter: LinearLayout
     private lateinit var lineChartText: TextView
 
@@ -165,10 +163,6 @@ class MainActivity : Activity() {
         })
         content.addView(buttons)
 
-        val extraButtons = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-
         traceButton = Button(this).apply {
             text = "TRACEROUTE"
             isAllCaps = false
@@ -178,21 +172,7 @@ class MainActivity : Activity() {
             setOnClickListener { startTraceRoute() }
         }
 
-        dnsButton = Button(this).apply {
-            text = "DNS LOOKUP"
-            isAllCaps = false
-            setBackgroundColor(panel)
-            setTextColor(green)
-            typeface = Typeface.DEFAULT_BOLD
-            setOnClickListener { startDnsLookup() }
-        }
-
-        extraButtons.addView(traceButton, LinearLayout.LayoutParams(0, dp(42), 1f))
-        extraButtons.addView(dnsButton, LinearLayout.LayoutParams(0, dp(42), 1f).apply {
-            marginStart = dp(8)
-        })
-
-        content.addView(extraButtons, LinearLayout.LayoutParams(-1, -2).apply {
+        content.addView(traceButton, LinearLayout.LayoutParams(-1, dp(42)).apply {
             topMargin = dp(2)
             bottomMargin = dp(4)
         })
@@ -225,13 +205,13 @@ class MainActivity : Activity() {
 
         content.addView(consoleHeader)
 
-        // Gráfico em Linha (Osciloscópio de Latência)
+        // Gráfico de Linha (Sparkline horizontal contínua)
         lineChartText = TextView(this).apply {
-            text = "· · · · · · · · · · · ·\n· · · · · · · · · · · ·\n· · · · · · · · · · · ·"
-            textSize = 11f
+            text = "──────────────────────"
+            textSize = 14f
             setTextColor(green)
             typeface = Typeface.MONOSPACE
-            setPadding(dp(13), dp(6), dp(13), dp(6))
+            setPadding(dp(13), dp(4), dp(13), dp(4))
             setBackgroundColor(Color.rgb(7, 12, 8))
         }
         content.addView(lineChartText, LinearLayout.LayoutParams(-1, -2))
@@ -416,7 +396,6 @@ class MainActivity : Activity() {
         runButton.isEnabled = false
         stopButton.isEnabled = true
         traceButton.isEnabled = false
-        dnsButton.isEnabled = false
 
         executor.execute {
             var process: Process? = null
@@ -438,7 +417,7 @@ class MainActivity : Activity() {
                             if (reply != null) {
                                 synchronized(recentLatencies) {
                                     recentLatencies.add(reply.timeMs)
-                                    if (recentLatencies.size > 16) recentLatencies.removeAt(0)
+                                    if (recentLatencies.size > 22) recentLatencies.removeAt(0)
                                 }
                                 runOnUiThread { updateSparkline() }
                             }
@@ -480,64 +459,6 @@ class MainActivity : Activity() {
                         runButton.isEnabled = true
                         stopButton.isEnabled = false
                         traceButton.isEnabled = true
-                        dnsButton.isEnabled = true
-                    }
-                }
-            }
-        }
-    }
-
-    private fun startDnsLookup() {
-        if (running) return
-
-        val host = command.text.toString().trim().split(Regex("\\s+")).firstOrNull().orEmpty()
-        if (host.isBlank() || host.startsWith("-")) {
-            append("Informe um domínio ou IP válido para o DNS Lookup.")
-            return
-        }
-
-        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-        imm.hideSoftInputFromWindow(command.windowToken, 0)
-        command.clearFocus()
-
-        append("")
-        append("────────────────────────────")
-        append("> nslookup $host")
-        append("Consultando registros DNS para $host...")
-
-        running = true
-        runButton.isEnabled = false
-        stopButton.isEnabled = false
-        traceButton.isEnabled = false
-        dnsButton.isEnabled = false
-
-        executor.execute {
-            var resultText = ""
-            try {
-                val addresses = InetAddress.getAllByName(host)
-                val sb = StringBuilder()
-                sb.append("Endereço(s) resolvido(s):\n")
-                for (addr in addresses) {
-                    sb.append("  -> ${addr.hostAddress} (${addr.hostName})\n")
-                }
-                resultText = sb.toString().trimEnd()
-            } catch (e: Exception) {
-                resultText = "Falha na resolução DNS: ${e.message ?: "Host desconhecido"}"
-            } finally {
-                runOnUiThread {
-                    if (!isFinishing && !isDestroyed) {
-                        append(resultText)
-                        append("Concluído.")
-                        append("────────────────────────────")
-                    }
-                }
-                running = false
-                runOnUiThread {
-                    if (!isFinishing && !isDestroyed) {
-                        runButton.isEnabled = true
-                        stopButton.isEnabled = false
-                        traceButton.isEnabled = true
-                        dnsButton.isEnabled = true
                     }
                 }
             }
@@ -568,7 +489,6 @@ class MainActivity : Activity() {
         runButton.isEnabled = false
         stopButton.isEnabled = true
         traceButton.isEnabled = false
-        dnsButton.isEnabled = false
 
         executor.execute {
             var failure: String? = null
@@ -636,7 +556,6 @@ class MainActivity : Activity() {
                         runButton.isEnabled = true
                         stopButton.isEnabled = false
                         traceButton.isEnabled = true
-                        dnsButton.isEnabled = true
                     }
                 }
             }
@@ -647,51 +566,22 @@ class MainActivity : Activity() {
         if (!::lineChartText.isInitialized) return
         val latencies = synchronized(recentLatencies) { recentLatencies.toList() }
         if (latencies.isEmpty()) {
-            lineChartText.text = "· · · · · · · · · · · ·\n· · · · · · · · · · · ·\n· · · · · · · · · · · ·"
+            lineChartText.text = "──────────────────────"
             return
         }
 
-        val width = 16
-        val paddedLatencies = if (latencies.size < width) {
-            List(width - latencies.size) { 0.0 } + latencies
-        } else {
-            latencies.takeLast(width)
-        }
-
-        val min = paddedLatencies.minOrNull() ?: 0.0
-        val max = paddedLatencies.maxOrNull() ?: 1.0
+        val chars = arrayOf(' ', '▂', '▃', '▄', '▅', '▆', '▇', '█')
+        val min = latencies.minOrNull() ?: 0.0
+        val max = latencies.maxOrNull() ?: 1.0
         val range = if (max - min == 0.0) 1.0 else max - min
 
-        // 3 níveis de altura (Linha 0 = alto, Linha 2 = baixo)
-        val lineTop = StringBuilder()
-        val lineMid = StringBuilder()
-        val lineBot = StringBuilder()
-
-        for (v in paddedLatencies) {
+        val sb = StringBuilder()
+        for (v in latencies) {
             val normalized = ((v - min) / range).coerceIn(0.0, 0.99)
-            // Mapeia para 0, 1 ou 2
-            val level = (normalized * 2.99).toInt()
-
-            when (level) {
-                2 -> { // Alto
-                    lineTop.append("▲ ")
-                    lineMid.append("· ")
-                    lineBot.append("· ")
-                }
-                1 -> { // Médio
-                    lineTop.append("· ")
-                    lineMid.append("█ ")
-                    lineBot.append("· ")
-                }
-                else -> { // Baixo
-                    lineTop.append("· ")
-                    lineMid.append("· ")
-                    lineBot.append("▼ ")
-                }
-            }
+            val idx = (normalized * (chars.size - 1)).toInt()
+            sb.append(chars[idx])
         }
-
-        lineChartText.text = "${lineTop.toString().trimEnd()}\n${lineMid.toString().trimEnd()}\n${lineBot.toString().trimEnd()}"
+        lineChartText.text = sb.toString()
     }
 
     private fun parseReply(line: String): PingReply? {
