@@ -843,7 +843,7 @@ class MainActivity : Activity() {
                         scroll.fullScroll(ScrollView.FOCUS_DOWN)
                     }
 
-                    outputHandler.postDelayed(this, 3L)
+                    outputHandler.postDelayed(this, 1L)
                 } else {
                     isTyping = false
                     typingRunnable = null
