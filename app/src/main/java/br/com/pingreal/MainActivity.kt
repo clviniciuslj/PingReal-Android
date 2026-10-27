@@ -2,10 +2,7 @@ package br.com.pingreal
 
 import android.app.Activity
 import android.content.Context
-import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.Paint
-import android.graphics.Path
 import android.graphics.Typeface
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
@@ -14,7 +11,6 @@ import android.os.Looper
 import android.text.InputType
 import android.text.TextUtils
 import android.view.Gravity
-import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
@@ -45,7 +41,6 @@ class MainActivity : Activity() {
     private lateinit var stopButton: Button
     private lateinit var traceButton: Button
     private lateinit var networkFooter: LinearLayout
-    private lateinit var latencyChartView: LatencyChartView
 
     @Volatile private var pingProcess: Process? = null
     @Volatile private var running = false
@@ -53,7 +48,6 @@ class MainActivity : Activity() {
     @Volatile private var pingStartedAt = 0L
 
     private val executor = Executors.newSingleThreadExecutor()
-    private val recentLatencies = mutableListOf<Double>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -120,7 +114,7 @@ class MainActivity : Activity() {
             textSize = 16f
             setTextColor(white)
             setHintTextColor(muted)
-            hint = "IP ou host -n 20"
+            hint = "IP ou host"
             setPadding(dp(14), dp(12), dp(14), dp(12))
             setBackgroundColor(panel)
             typeface = Typeface.MONOSPACE
@@ -208,14 +202,6 @@ class MainActivity : Activity() {
         }, LinearLayout.LayoutParams(dp(44), dp(40)))
 
         content.addView(consoleHeader)
-
-        // Gráfico de Linha Vetorial Real (Custom View)
-        latencyChartView = LatencyChartView(this).apply {
-            setBackgroundColor(Color.rgb(15, 22, 17))
-        }
-        content.addView(latencyChartView, LinearLayout.LayoutParams(-1, dp(100)).apply {
-            bottomMargin = dp(6)
-        })
 
         scroll = ScrollView(this).apply {
             setBackgroundColor(Color.rgb(4, 8, 5))
@@ -342,7 +328,8 @@ class MainActivity : Activity() {
             return
         }
 
-        var continuous = false
+        // Por padrão agora é sempre contínuo (infinito), a menos que passem -n ou -c
+        var continuous = true
         var count = 4
         var countSpecified = false
         var index = 1
@@ -350,7 +337,6 @@ class MainActivity : Activity() {
         while (index < parts.size) {
             when (parts[index].lowercase()) {
                 "-t" -> {
-                    if (continuous) { append("Parâmetro -t repetido."); return }
                     continuous = true
                     index++
                 }
@@ -360,23 +346,16 @@ class MainActivity : Activity() {
                     if (parsed == null || parsed !in 1..10000) { append("Quantidade deve estar entre 1 e 10000."); return }
                     count = parsed
                     countSpecified = true
+                    continuous = false
                     index += 2
                 }
                 else -> { append("Parâmetro desconhecido: ${parts[index]}"); return }
             }
         }
 
-        if (continuous && countSpecified) {
-            append("Use -t ou -n quantidade, não os dois.")
-            return
-        }
-
         val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
         imm.hideSoftInputFromWindow(command.windowToken, 0)
         command.clearFocus()
-
-        recentLatencies.clear()
-        latencyChartView.setLatencies(recentLatencies)
 
         val args = mutableListOf("/system/bin/ping", "-W", "1", "-s", "32")
         if (!continuous) {
@@ -414,14 +393,6 @@ class MainActivity : Activity() {
 
                         val formatted = formatPingLine(line)
                         if (formatted != null) {
-                            val reply = parseReply(line)
-                            if (reply != null) {
-                                synchronized(recentLatencies) {
-                                    recentLatencies.add(reply.timeMs)
-                                    if (recentLatencies.size > 20) recentLatencies.removeAt(0)
-                                }
-                                runOnUiThread { latencyChartView.setLatencies(recentLatencies) }
-                            }
                             runOnUiThread { if (!isFinishing && !isDestroyed) append(formatted) }
                         } else if (isErrorLine(line)) {
                             runOnUiThread { if (!isFinishing && !isDestroyed) append(line) }
@@ -623,8 +594,6 @@ class MainActivity : Activity() {
     }
 
     private fun clearConsole() {
-        recentLatencies.clear()
-        latencyChartView.setLatencies(recentLatencies)
         output.text = ""
     }
 
@@ -648,75 +617,5 @@ class MainActivity : Activity() {
         pingProcess?.destroy()
         executor.shutdownNow()
         super.onDestroy()
-    }
-
-    // --- Custom View para desenhar o Gráfico de Linha Vetorial Real ---
-    class LatencyChartView(context: Context) : View(context) {
-        private val latencies = mutableListOf<Double>()
-        private val paintLine = Paint().apply {
-            color = Color.rgb(74, 222, 128)
-            strokeWidth = 4f
-            style = Paint.Style.STROKE
-            isAntiAlias = true
-        }
-        private val paintPoint = Paint().apply {
-            color = Color.rgb(74, 222, 128)
-            style = Paint.Style.FILL
-            isAntiAlias = true
-        }
-        private val paintText = Paint().apply {
-            color = Color.rgb(145, 160, 150)
-            textSize = 28f
-            typeface = Typeface.MONOSPACE
-            isAntiAlias = true
-        }
-
-        fun setLatencies(list: List<Double>) {
-            latencies.clear()
-            latencies.addAll(list)
-            invalidate()
-        }
-
-        override fun onDraw(canvas: Canvas) {
-            super.onDraw(canvas)
-
-            val w = width.toFloat()
-            val h = height.toFloat()
-            val padding = 40f
-
-            if (latencies.isEmpty()) {
-                canvas.drawText("Aguardando dados de ping...", padding, h / 2f, paintText)
-                return
-            }
-
-            val min = latencies.minOrNull() ?: 0.0
-            val max = latencies.maxOrNull() ?: 1.0
-            val range = if (max - min == 0.0) 1.0 else max - min
-
-            val availableWidth = w - (padding * 2f)
-            val availableHeight = h - (padding * 2f)
-            val stepX = if (latencies.size > 1) availableWidth / (latencies.size - 1) else availableWidth
-
-            val path = Path()
-            val points = mutableListOf<Pair<Float, Float>>()
-
-            for (i in latencies.indices) {
-                val x = padding + (i * stepX)
-                // Inverte o eixo Y para que valores maiores fiquem para cima
-                val normalized = ((latencies[i] - min) / range).toFloat()
-                val y = (h - padding) - (normalized * availableHeight)
-
-                points.add(Pair(x, y))
-                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
-            }
-
-            // Desenha a linha conectando os pontos
-            canvas.drawPath(path, paintLine)
-
-            // Desenha os pontos (círculos) em cada vértice
-            for (pt in points) {
-                canvas.drawCircle(pt.first, pt.second, 6f, paintPoint)
-            }
-        }
     }
 }
