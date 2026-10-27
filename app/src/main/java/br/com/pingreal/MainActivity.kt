@@ -225,35 +225,43 @@ class MainActivity : Activity() {
     }
 
     private fun updateNetworkFooter() {
-        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val network = cm.activeNetwork
-        val caps = network?.let { cm.getNetworkCapabilities(it) }
-        val props = network?.let { cm.getLinkProperties(it) }
+        try {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val network = cm.activeNetwork
+            val caps = network?.let { cm.getNetworkCapabilities(it) }
+            val props = network?.let { cm.getLinkProperties(it) }
 
-        val type = when {
-            caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true -> "Wi-Fi"
-            caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true -> "Móvel"
-            caps?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true -> "Ethernet"
-            caps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true -> "VPN"
-            else -> "—"
-        }
-
-        val ip = props?.linkAddresses
-            ?.firstOrNull { it.address is java.net.Inet4Address && !it.address.isLoopbackAddress }
-            ?.address?.hostAddress ?: "—"
-
-        val gateway = props?.routes
-            ?.firstOrNull { route ->
-                val destination = route.destination
-                destination.prefixLength == 0 && destination.address.isAnyLocalAddress
+            val type = when {
+                caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true -> "Wi-Fi"
+                caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true -> "Móvel"
+                caps?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true -> "Ethernet"
+                caps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true -> "VPN"
+                else -> "—"
             }
-            ?.gateway?.hostAddress ?: "—"
 
-        val dns = props?.dnsServers
-            ?.firstOrNull { it is java.net.Inet4Address }
-            ?.hostAddress ?: props?.dnsServers?.firstOrNull()?.hostAddress ?: "—"
+            val ip = props?.linkAddresses
+                ?.firstOrNull { it.address is java.net.Inet4Address && !it.address.isLoopbackAddress }
+                ?.address?.hostAddress ?: "—"
 
-        networkFooter.text = "GW $gateway                 DNS $dns\nIP $ip                 NET $type"
+            val gateway = props?.routes
+                ?.firstOrNull { route ->
+                    val destination = route.destination
+                    destination.prefixLength == 0 && destination.address.isAnyLocalAddress
+                }
+                ?.gateway?.hostAddress ?: "—"
+
+            val dns = props?.dnsServers
+                ?.firstOrNull { it is java.net.Inet4Address }
+                ?.hostAddress ?: props?.dnsServers?.firstOrNull()?.hostAddress ?: "—"
+
+            networkFooter.text = "GW $gateway                 DNS $dns\nIP $ip                 NET $type"
+        } catch (_: SecurityException) {
+            // O rodapé não deve impedir o aplicativo de abrir se faltar permissão de rede.
+            networkFooter.text = "GW —                 DNS —\nIP —                 NET —"
+        } catch (_: Exception) {
+            // Falha ao consultar a rede não deve derrubar a tela principal.
+            networkFooter.text = "GW —                 DNS —\nIP —                 NET —"
+        }
     }
 
     private fun startPing() {
