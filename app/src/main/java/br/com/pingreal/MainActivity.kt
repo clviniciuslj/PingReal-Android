@@ -486,7 +486,15 @@ class MainActivity : Activity() {
                         else -> "$ttl  *"
                     }
                     runOnUiThread {
-                        if (!isFinishing && !isDestroyed) append(line)
+                        if (!isFinishing && !isDestroyed) {
+                            append(line)
+                            // Diagnóstico temporário: revela a saída real do ping quando o salto 2 não é identificado.
+                            if (ttl == 2 && hopAddress == null && lines.isNotEmpty()) {
+                                append("[Diagnóstico TTL 2 — saída do ping]")
+                                lines.forEach { append(it) }
+                                append("[Fim do diagnóstico]")
+                            }
+                        }
                     }
 
                     if (reply != null && (
