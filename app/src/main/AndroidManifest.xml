@@ -8,7 +8,7 @@
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:allowBackup="false"
-        android:label="Ping Real"
+        android:label="RealPing"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="true">
 
