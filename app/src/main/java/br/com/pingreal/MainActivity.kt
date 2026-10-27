@@ -257,10 +257,10 @@ class MainActivity : Activity() {
             networkFooter.text = "GW $gateway                 DNS $dns\nIP $ip                 NET $type"
         } catch (_: SecurityException) {
             // O rodapé não deve impedir o aplicativo de abrir se faltar permissão de rede.
-            networkFooter.text = "GW —                 DNS —\nIP —                 NET —"
+            networkFooter.text = "GW N/D                 DNS N/D\nIP N/D                 NET indisponível"
         } catch (_: Exception) {
             // Falha ao consultar a rede não deve derrubar a tela principal.
-            networkFooter.text = "GW —                 DNS —\nIP —                 NET —"
+            networkFooter.text = "GW N/D                 DNS N/D\nIP N/D                 NET indisponível"
         }
     }
 
@@ -428,7 +428,7 @@ class MainActivity : Activity() {
         append("────────────────────────────")
         append("> traceroute $host")
         append("Rastreando rota para $host (máximo de 20 saltos)...")
-        append("Cada salto pode levar alguns segundos; * indica ausência de resposta.")
+        append("Método compatível: sondas ping com TTL crescente.")
         append("")
 
         running = true
@@ -438,50 +438,75 @@ class MainActivity : Activity() {
         traceButton.isEnabled = false
 
         executor.execute {
-            var process: Process? = null
             var failure: String? = null
+            var reachedDestination = false
             try {
-                val commands = listOf(
-                    listOf("/system/bin/traceroute", "-m", "20", "-w", "1", host),
-                    listOf("traceroute", "-m", "20", "-w", "1", host),
-                    listOf("toybox", "traceroute", "-m", "20", "-w", "1", host)
-                )
-                var lastStartError: Exception? = null
-                for (args in commands) {
-                    try {
-                        process = ProcessBuilder(args).redirectErrorStream(true).start()
-                        pingProcess = process
-                        lastStartError = null
-                        break
-                    } catch (e: Exception) {
-                        lastStartError = e
-                    }
-                }
-                if (process == null) {
-                    throw lastStartError ?: IllegalStateException("Traceroute não está disponível neste Android.")
-                }
+                for (ttl in 1..20) {
+                    if (stopRequested || Thread.currentThread().isInterrupted) break
 
-                BufferedReader(InputStreamReader(process!!.inputStream)).use { reader ->
-                    while (true) {
-                        val line = reader.readLine() ?: break
-                        if (line.isNotBlank()) {
-                            runOnUiThread {
-                                if (!isFinishing && !isDestroyed) append(line)
+                    val args = listOf(
+                        "/system/bin/ping", "-n", "-c", "1", "-W", "1",
+                        "-t", ttl.toString(), host
+                    )
+                    val process = ProcessBuilder(args).redirectErrorStream(true).start()
+                    pingProcess = process
+                    val lines = mutableListOf<String>()
+                    BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
+                        while (true) {
+                            if (stopRequested) {
+                                process.destroy()
+                                break
                             }
+                            val line = reader.readLine() ?: break
+                            if (line.isNotBlank()) lines.add(line)
                         }
                     }
+                    try { process.waitFor() } catch (_: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                    }
+                    pingProcess = null
+
+                    val reply = lines.firstOrNull {
+                        it.contains("bytes from", ignoreCase = true) ||
+                            it.contains("Time to live exceeded", ignoreCase = true) ||
+                            it.contains("Time exceeded", ignoreCase = true)
+                    }
+                    val hopAddress = reply?.let {
+                        Regex("""from\s+([^: ]+)""", RegexOption.IGNORE_CASE)
+                            .find(it)?.groupValues?.getOrNull(1)
+                    }
+                    val time = reply?.let {
+                        Regex("""time[=<]([\d.]+)\s*ms""", RegexOption.IGNORE_CASE)
+                            .find(it)?.groupValues?.getOrNull(1)
+                    }
+
+                    val line = when {
+                        hopAddress != null && time != null -> "$ttl  $hopAddress  ${time} ms"
+                        hopAddress != null -> "$ttl  $hopAddress"
+                        else -> "$ttl  *"
+                    }
+                    runOnUiThread {
+                        if (!isFinishing && !isDestroyed) append(line)
+                    }
+
+                    if (reply != null && (
+                        reply.contains("bytes from", ignoreCase = true) &&
+                            (reply.contains("ttl=", ignoreCase = true) ||
+                             reply.contains("ttl ", ignoreCase = true))
+                    )) {
+                        reachedDestination = true
+                        break
+                    }
                 }
-                process!!.waitFor()
             } catch (e: Exception) {
-                if (!stopRequested) failure = e.message ?: "não foi possível executar o traceroute"
+                if (!stopRequested) failure = e.message ?: "falha ao executar as sondas do traceroute"
             } finally {
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed) {
                         if (stopRequested) append("Traceroute interrompido pelo usuário.")
-                        else if (failure != null) {
-                            append("Não foi possível executar o traceroute: $failure")
-                            append("Este Android pode não incluir o comando traceroute.")
-                        } else append("Traceroute concluído.")
+                        else if (failure != null) append("Falha no traceroute: $failure")
+                        else if (reachedDestination) append("Destino alcançado.")
+                        else append("Rastreamento encerrado; saltos sem resposta podem estar filtrados.")
                         append("────────────────────────────")
                     }
                 }
