@@ -77,7 +77,7 @@ class MainActivity : Activity() {
         })
 
         header.addView(TextView(this).apply {
-            text = "PING REAL"
+            text = "REAL PING"
             textSize = 25f
             gravity = Gravity.CENTER
             setTextColor(white)
