@@ -2,7 +2,10 @@ package br.com.pingreal
 
 import android.app.Activity
 import android.content.Context
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Typeface
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
@@ -11,6 +14,7 @@ import android.os.Looper
 import android.text.InputType
 import android.text.TextUtils
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
@@ -41,7 +45,7 @@ class MainActivity : Activity() {
     private lateinit var stopButton: Button
     private lateinit var traceButton: Button
     private lateinit var networkFooter: LinearLayout
-    private lateinit var lineChartText: TextView
+    private lateinit var latencyChartView: LatencyChartView
 
     @Volatile private var pingProcess: Process? = null
     @Volatile private var running = false
@@ -205,16 +209,13 @@ class MainActivity : Activity() {
 
         content.addView(consoleHeader)
 
-        // Gráfico de Linha (Sparkline horizontal contínua)
-        lineChartText = TextView(this).apply {
-            text = "──────────────────────"
-            textSize = 14f
-            setTextColor(green)
-            typeface = Typeface.MONOSPACE
-            setPadding(dp(13), dp(4), dp(13), dp(4))
-            setBackgroundColor(Color.rgb(7, 12, 8))
+        // Gráfico de Linha Vetorial Real (Custom View)
+        latencyChartView = LatencyChartView(this).apply {
+            setBackgroundColor(Color.rgb(15, 22, 17))
         }
-        content.addView(lineChartText, LinearLayout.LayoutParams(-1, -2))
+        content.addView(latencyChartView, LinearLayout.LayoutParams(-1, dp(100)).apply {
+            bottomMargin = dp(6)
+        })
 
         scroll = ScrollView(this).apply {
             setBackgroundColor(Color.rgb(4, 8, 5))
@@ -375,7 +376,7 @@ class MainActivity : Activity() {
         command.clearFocus()
 
         recentLatencies.clear()
-        updateSparkline()
+        latencyChartView.setLatencies(recentLatencies)
 
         val args = mutableListOf("/system/bin/ping", "-W", "1", "-s", "32")
         if (!continuous) {
@@ -417,9 +418,9 @@ class MainActivity : Activity() {
                             if (reply != null) {
                                 synchronized(recentLatencies) {
                                     recentLatencies.add(reply.timeMs)
-                                    if (recentLatencies.size > 22) recentLatencies.removeAt(0)
+                                    if (recentLatencies.size > 20) recentLatencies.removeAt(0)
                                 }
-                                runOnUiThread { updateSparkline() }
+                                runOnUiThread { latencyChartView.setLatencies(recentLatencies) }
                             }
                             runOnUiThread { if (!isFinishing && !isDestroyed) append(formatted) }
                         } else if (isErrorLine(line)) {
@@ -562,28 +563,6 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun updateSparkline() {
-        if (!::lineChartText.isInitialized) return
-        val latencies = synchronized(recentLatencies) { recentLatencies.toList() }
-        if (latencies.isEmpty()) {
-            lineChartText.text = "──────────────────────"
-            return
-        }
-
-        val chars = arrayOf(' ', '▂', '▃', '▄', '▅', '▆', '▇', '█')
-        val min = latencies.minOrNull() ?: 0.0
-        val max = latencies.maxOrNull() ?: 1.0
-        val range = if (max - min == 0.0) 1.0 else max - min
-
-        val sb = StringBuilder()
-        for (v in latencies) {
-            val normalized = ((v - min) / range).coerceIn(0.0, 0.99)
-            val idx = (normalized * (chars.size - 1)).toInt()
-            sb.append(chars[idx])
-        }
-        lineChartText.text = sb.toString()
-    }
-
     private fun parseReply(line: String): PingReply? {
         val match = Regex("""(\d+)\s+bytes from\s+(.+?):.*?\bttl[= ](\d+).*?\btime[=<]([\d.]+)\s*ms""", RegexOption.IGNORE_CASE).find(line) ?: return null
         val address = match.groupValues[2].trim().removeSuffix(":")
@@ -645,7 +624,7 @@ class MainActivity : Activity() {
 
     private fun clearConsole() {
         recentLatencies.clear()
-        updateSparkline()
+        latencyChartView.setLatencies(recentLatencies)
         output.text = ""
     }
 
@@ -669,5 +648,75 @@ class MainActivity : Activity() {
         pingProcess?.destroy()
         executor.shutdownNow()
         super.onDestroy()
+    }
+
+    // --- Custom View para desenhar o Gráfico de Linha Vetorial Real ---
+    class LatencyChartView(context: Context) : View(context) {
+        private val latencies = mutableListOf<Double>()
+        private val paintLine = Paint().apply {
+            color = Color.rgb(74, 222, 128)
+            strokeWidth = 4f
+            style = Paint.Style.STROKE
+            isAntiAlias = true
+        }
+        private val paintPoint = Paint().apply {
+            color = Color.rgb(74, 222, 128)
+            style = Paint.Style.FILL
+            isAntiAlias = true
+        }
+        private val paintText = Paint().apply {
+            color = Color.rgb(145, 160, 150)
+            textSize = 28f
+            typeface = Typeface.MONOSPACE
+            isAntiAlias = true
+        }
+
+        fun setLatencies(list: List<Double>) {
+            latencies.clear()
+            latencies.addAll(list)
+            invalidate()
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+
+            val w = width.toFloat()
+            val h = height.toFloat()
+            val padding = 40f
+
+            if (latencies.isEmpty()) {
+                canvas.drawText("Aguardando dados de ping...", padding, h / 2f, paintText)
+                return
+            }
+
+            val min = latencies.minOrNull() ?: 0.0
+            val max = latencies.maxOrNull() ?: 1.0
+            val range = if (max - min == 0.0) 1.0 else max - min
+
+            val availableWidth = w - (padding * 2f)
+            val availableHeight = h - (padding * 2f)
+            val stepX = if (latencies.size > 1) availableWidth / (latencies.size - 1) else availableWidth
+
+            val path = Path()
+            val points = mutableListOf<Pair<Float, Float>>()
+
+            for (i in latencies.indices) {
+                val x = padding + (i * stepX)
+                // Inverte o eixo Y para que valores maiores fiquem para cima
+                val normalized = ((latencies[i] - min) / range).toFloat()
+                val y = (h - padding) - (normalized * availableHeight)
+
+                points.add(Pair(x, y))
+                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            }
+
+            // Desenha a linha conectando os pontos
+            canvas.drawPath(path, paintLine)
+
+            // Desenha os pontos (círculos) em cada vértice
+            for (pt in points) {
+                canvas.drawCircle(pt.first, pt.second, 6f, paintPoint)
+            }
+        }
     }
 }
