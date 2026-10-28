@@ -3,6 +3,7 @@ package br.com.pingreal
 import java.util.concurrent.ExecutorService
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 class PingStats {
     var received = 0
@@ -53,7 +54,9 @@ class PingSession(
 ) {
     interface Listener {
         fun onReply(session: PingSession, reply: PingReply, sampleTime: Long)
-        fun onLoss(session: PingSession, sendTime: Long)
+        /** [blocked]: o envio falhou porque o Android bloqueou a rede do app (e não por falta de resposta). */
+        fun onLoss(session: PingSession, sendTime: Long, blocked: Boolean)
+        fun onBlockedChanged(session: PingSession, blocked: Boolean)
         fun onErrorLine(session: PingSession, line: String)
         fun onFinished(session: PingSession, error: String?)
     }
@@ -115,6 +118,9 @@ class PingSession(
     private var lastSeq = 0
     private var slotStart = 0L
     private var slotAnchored = false
+    private var lastTickAt = 0L
+    private var blocked = false
+    private val settled = HashSet<Int>()
 
     fun start() {
         slotStart = System.currentTimeMillis()
@@ -128,7 +134,13 @@ class PingSession(
 
     /** Chamado periodicamente pela UI para detectar pacotes cujo prazo venceu. */
     fun tick() {
-        if (!finished) checkLosses(false)
+        if (finished || stopRequested) return
+        val now = System.currentTimeMillis()
+        // Se a UI ficou parada (tela bloqueada, app em segundo plano), o relógio dos pacotes não andou
+        // junto: sem este ajuste, todos os pacotes "atrasados" seriam contados como perdidos de uma vez.
+        if (lastTickAt != 0L && now - lastTickAt > 3000) slotStart += now - lastTickAt
+        lastTickAt = now
+        checkLosses(false)
     }
 
     private fun runProcess() {
@@ -163,7 +175,17 @@ class PingSession(
     }
 
     private fun handleLine(line: String) {
-        if (finished) return
+        // Depois de parar, linhas que ainda estavam na fila chegam com horário errado: ignora.
+        if (finished || stopRequested) return
+
+        // "ping: sendmsg: Operation not permitted": o Android bloqueou a rede do app (segundo plano,
+        // economia de bateria/dados). É temporário, não um erro de destino.
+        val lowerLine = line.lowercase()
+        if (lowerLine.contains("sendmsg") && lowerLine.contains("not permitted")) {
+            onSendBlocked()
+            return
+        }
+
         val reply = parseReply(line)
         if (reply == null) {
             if (isErrorLine(line)) {
@@ -185,9 +207,29 @@ class PingSession(
 
         if (seq < nextSeq) stats.lost = max(0, stats.lost - 1) // chegou depois de marcado como perdido
 
+        if (blocked) {
+            blocked = false
+            listener.onBlockedChanged(this, false)
+        }
         stats.add(reply.timeMs)
         listener.onReply(this, reply, now - reply.timeMs.toLong())
         checkLosses(false)
+    }
+
+    /** O envio do pacote atual falhou: registra a perda na hora, em vez de esperar o prazo vencer. */
+    private fun onSendBlocked() {
+        val now = System.currentTimeMillis()
+        if (!blocked) {
+            blocked = true
+            listener.onBlockedChanged(this, true)
+        }
+        val seq = ((now - slotStart) / 1000.0).roundToInt() + 1
+        val limit = if (continuous) Int.MAX_VALUE else count
+        if (seq < nextSeq || seq > limit || seq in answered || !settled.add(seq)) return
+        stats.lost++
+        stats.last = -1.0
+        stats.lastWasLoss = true
+        listener.onLoss(this, now, true)
     }
 
     /** Marca como perdidos os pacotes cujo prazo venceu (ou todos os pendentes, se [force] e o ping for finito). */
@@ -198,11 +240,11 @@ class PingSession(
             if (force && continuous) break
             val sendTime = slotStart + (nextSeq - 1) * 1000L
             if (!force && sendTime + LOSS_TIMEOUT_MS > now) break
-            if (nextSeq !in answered) {
+            if (nextSeq !in answered && nextSeq !in settled) {
                 stats.lost++
                 stats.last = -1.0
                 stats.lastWasLoss = true
-                listener.onLoss(this, sendTime)
+                listener.onLoss(this, sendTime, false)
             }
             nextSeq++
         }

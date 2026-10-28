@@ -152,6 +152,11 @@ class MainActivity : Activity() {
     @Volatile private var stopRequested = false
     private var traceDebug = false
 
+    // Ping contínuo pausado ao sair da tela (bloqueio, troca de app) e retomado ao voltar.
+    private var inForeground = false
+    private var backgroundPause = false
+    private var pendingResume: List<Target>? = null
+
     private val handler = Handler(Looper.getMainLooper())
     private val executor = Executors.newSingleThreadExecutor()
     private val sessionPool = Executors.newCachedThreadPool()
@@ -195,10 +200,22 @@ class MainActivity : Activity() {
             updateStats()
         }
 
-        override fun onLoss(session: PingSession, sendTime: Long) {
+        override fun onLoss(session: PingSession, sendTime: Long, blocked: Boolean) {
             chart.addLoss(sessions.indexOf(session), sendTime)
-            append("${prefix(session)}Esgotado o tempo limite da solicitação.", amber)
+            // Perdas por rede bloqueada já são explicadas pelo aviso de bloqueio: não repete linha por pacote.
+            if (!blocked) append("${prefix(session)}Esgotado o tempo limite da solicitação.", amber)
             updateStats()
+        }
+
+        override fun onBlockedChanged(session: PingSession, blocked: Boolean) {
+            if (blocked) {
+                append(
+                    "${prefix(session)}Rede bloqueada pelo Android para este app (segundo plano ou economia de dados). Aguardando liberar…",
+                    amber
+                )
+            } else {
+                append("${prefix(session)}Rede liberada.", green)
+            }
         }
 
         override fun onErrorLine(session: PingSession, line: String) {
@@ -258,6 +275,8 @@ class MainActivity : Activity() {
 
     override fun onStart() {
         super.onStart()
+        inForeground = true
+        if (pendingResume != null && mode == Mode.IDLE) resumePing()
         try {
             getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(networkCallback)
             callbackRegistered = true
@@ -268,6 +287,17 @@ class MainActivity : Activity() {
     }
 
     override fun onStop() {
+        inForeground = false
+        // O Android congela o app com a tela bloqueada: o ping não anda, mas o relógio sim, e a volta
+        // vira uma enxurrada de perdas falsas. Então pausa de verdade e retoma ao voltar.
+        if (mode == Mode.PING && sessions.any { !it.finished }) {
+            if (sessions.all { it.continuous }) {
+                pendingResume = sessions.map { Target(it.label, it.host, it.continuous, it.count) }
+            }
+            backgroundPause = true
+            stopRequested = true
+            sessions.forEach { it.stop() }
+        }
         if (callbackRegistered) {
             try {
                 getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkCallback)
@@ -1137,7 +1167,7 @@ class MainActivity : Activity() {
         startSessions(targets)
     }
 
-    private fun startSessions(targets: List<Target>) {
+    private fun startSessions(targets: List<Target>, keepChart: Boolean = false) {
         hideKeyboard()
         stopRequested = false
 
@@ -1147,7 +1177,8 @@ class MainActivity : Activity() {
         }
 
         chart.placeholder = "Aguardando respostas…"
-        chart.setSeries(colors)
+        // Na retomada o gráfico mantém o histórico (com um vazio no período em que o app esteve fora).
+        if (!keepChart) chart.setSeries(colors)
         chart.setLive(true)
         buildStatsPanel()
         updateStats()
@@ -1187,16 +1218,37 @@ class MainActivity : Activity() {
     private fun completeRun() {
         handler.removeCallbacks(lossTick)
         chart.setLive(false)
-        append(if (stopRequested) "Interrompido pelo usuário." else "Concluído.", muted)
+        val paused = backgroundPause
+        backgroundPause = false
+        append(
+            when {
+                paused -> "Pausado: o app saiu da tela."
+                stopRequested -> "Interrompido pelo usuário."
+                else -> "Concluído."
+            },
+            muted
+        )
         append("────────────────────────────", muted)
 
         lastRunMode = Mode.PING
         setMode(Mode.IDLE)
         updateStats()
+
+        if (pendingResume != null && inForeground) resumePing()
+    }
+
+    private fun resumePing() {
+        val targets = pendingResume ?: return
+        pendingResume = null
+        append("")
+        append("Retomando o ping…", cyan)
+        append("")
+        startSessions(targets, keepChart = true)
     }
 
     private fun stopRun() {
         if (mode != Mode.PING && mode != Mode.TRACE) return
+        pendingResume = null
         stopRequested = true
         append("Interrompendo...", muted)
         sessions.forEach { it.stop() }
