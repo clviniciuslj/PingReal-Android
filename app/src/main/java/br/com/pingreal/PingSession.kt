@@ -41,6 +41,10 @@ class PingReply(val address: String, val ttl: String, val timeMs: Double, val se
 /**
  * Um ping contra um único alvo. Roda o binário do sistema numa thread própria e entrega tudo
  * (respostas, perdas, erros, fim) ao [Listener] **na thread da UI**.
+ *
+ * Cada execução do processo é uma "época": o `ping` recomeça a numerar os pacotes do 1, então ao
+ * reiniciar o processo (por [restart] ou porque o sistema o encerrou) a contagem de sequência é zerada,
+ * mas as estatísticas ([stats]) continuam acumulando.
  */
 class PingSession(
     val label: String,
@@ -54,10 +58,14 @@ class PingSession(
 ) {
     interface Listener {
         fun onReply(session: PingSession, reply: PingReply, sampleTime: Long)
+
         /** [blocked]: o envio falhou porque o Android bloqueou a rede do app (e não por falta de resposta). */
         fun onLoss(session: PingSession, sendTime: Long, blocked: Boolean)
         fun onBlockedChanged(session: PingSession, blocked: Boolean)
         fun onErrorLine(session: PingSession, line: String)
+
+        /** O processo do ping foi encerrado pelo sistema e foi iniciado de novo. */
+        fun onRestarted(session: PingSession)
         fun onFinished(session: PingSession, error: String?)
     }
 
@@ -112,24 +120,40 @@ class PingSession(
         private set
 
     @Volatile private var process: Process? = null
+    @Volatile private var epoch = 0
 
+    // Controle de sequência da execução atual do processo (somente thread da UI).
     private val answered = HashSet<Int>()
+    private val settled = HashSet<Int>()
     private var nextSeq = 1
     private var lastSeq = 0
     private var slotStart = 0L
     private var slotAnchored = false
     private var lastTickAt = 0L
     private var blocked = false
-    private val settled = HashSet<Int>()
+    private var epochReplies = 0
 
     fun start() {
-        slotStart = System.currentTimeMillis()
-        pool.execute { runProcess() }
+        resetTracking()
+        launch()
     }
 
     fun stop() {
         stopRequested = true
         process?.destroy()
+    }
+
+    /**
+     * Reinicia o processo do ping mantendo as estatísticas. Usado ao voltar para o app, para não depender
+     * de um processo que pode ter ficado preso durante o bloqueio da tela.
+     */
+    fun restart() {
+        // Ping com quantidade fixa seguiria a própria contagem: reiniciar o faria enviar pacotes a mais.
+        if (finished || stopRequested || !continuous) return
+        epoch++
+        process?.destroy()
+        resetTracking()
+        launch()
     }
 
     /** Chamado periodicamente pela UI para detectar pacotes cujo prazo venceu. */
@@ -143,7 +167,24 @@ class PingSession(
         checkLosses(false)
     }
 
-    private fun runProcess() {
+    private fun resetTracking() {
+        answered.clear()
+        settled.clear()
+        nextSeq = 1
+        lastSeq = 0
+        slotStart = System.currentTimeMillis()
+        slotAnchored = false
+        lastTickAt = 0L
+        blocked = false
+        epochReplies = 0
+    }
+
+    private fun launch() {
+        val myEpoch = epoch
+        pool.execute { runProcess(myEpoch) }
+    }
+
+    private fun runProcess(myEpoch: Int) {
         var error: String? = null
         try {
             val args = mutableListOf("/system/bin/ping", "-W", "1", "-s", "32")
@@ -155,26 +196,45 @@ class PingSession(
 
             val p = ProcessBuilder(args).redirectErrorStream(true).start()
             process = p
-            if (stopRequested) p.destroy()
+            if (stopRequested || myEpoch != epoch) p.destroy()
             try {
                 p.inputStream.bufferedReader().use { reader ->
                     while (true) {
                         val line = reader.readLine() ?: break
-                        if (line.isNotBlank()) postToUi { handleLine(line) }
+                        if (line.isBlank()) continue
+                        // O horário vale o da leitura, não o do processamento na UI (que pode atrasar).
+                        val readAt = System.currentTimeMillis()
+                        postToUi { if (myEpoch == epoch) handleLine(line, readAt) }
                     }
                 }
                 p.waitFor()
             } finally {
-                process = null
+                if (process === p) process = null
                 p.destroy()
             }
         } catch (e: Exception) {
-            if (!stopRequested) error = e.message ?: "falha ao executar ping"
+            if (!stopRequested && myEpoch == epoch) error = e.message ?: "falha ao executar ping"
         }
-        postToUi { finish(error) }
+        postToUi { onProcessEnded(myEpoch, error) }
     }
 
-    private fun handleLine(line: String) {
+    private fun onProcessEnded(myEpoch: Int, error: String?) {
+        if (myEpoch != epoch || finished) return // já substituído por um processo novo
+
+        // Ping contínuo que morreu sozinho (ex.: o sistema encerrou o processo em segundo plano): reinicia.
+        // Só se já tinha funcionado, para não ficar num laço infinito com destino inválido.
+        val diedOnItsOwn = continuous && !stopRequested && error == null && !hardError && epochReplies > 0
+        if (diedOnItsOwn) {
+            listener.onRestarted(this)
+            epoch++
+            resetTracking()
+            launch()
+            return
+        }
+        finish(error)
+    }
+
+    private fun handleLine(line: String, readAt: Long) {
         // Depois de parar, linhas que ainda estavam na fila chegam com horário errado: ignora.
         if (finished || stopRequested) return
 
@@ -182,25 +242,24 @@ class PingSession(
         // economia de bateria/dados). É temporário, não um erro de destino.
         val lowerLine = line.lowercase()
         if (lowerLine.contains("sendmsg") && lowerLine.contains("not permitted")) {
-            onSendBlocked()
+            onSendBlocked(readAt)
             return
         }
 
         val reply = parseReply(line)
         if (reply == null) {
             if (isErrorLine(line)) {
-                if (isHardError(line.lowercase())) hardError = true
+                if (isHardError(lowerLine)) hardError = true
                 listener.onErrorLine(this, line)
             }
             return
         }
 
-        val now = System.currentTimeMillis()
         val seq = reply.seq ?: (lastSeq + 1)
         lastSeq = max(lastSeq, seq)
 
         if (!slotAnchored) {
-            slotStart = now - reply.timeMs.toLong() - (seq - 1) * 1000L
+            slotStart = readAt - reply.timeMs.toLong() - (seq - 1) * 1000L
             slotAnchored = true
         }
         if (!answered.add(seq)) return // duplicado
@@ -211,25 +270,25 @@ class PingSession(
             blocked = false
             listener.onBlockedChanged(this, false)
         }
+        epochReplies++
         stats.add(reply.timeMs)
-        listener.onReply(this, reply, now - reply.timeMs.toLong())
+        listener.onReply(this, reply, readAt - reply.timeMs.toLong())
         checkLosses(false)
     }
 
     /** O envio do pacote atual falhou: registra a perda na hora, em vez de esperar o prazo vencer. */
-    private fun onSendBlocked() {
-        val now = System.currentTimeMillis()
+    private fun onSendBlocked(at: Long) {
         if (!blocked) {
             blocked = true
             listener.onBlockedChanged(this, true)
         }
-        val seq = ((now - slotStart) / 1000.0).roundToInt() + 1
+        val seq = ((at - slotStart) / 1000.0).roundToInt() + 1
         val limit = if (continuous) Int.MAX_VALUE else count
         if (seq < nextSeq || seq > limit || seq in answered || !settled.add(seq)) return
         stats.lost++
         stats.last = -1.0
         stats.lastWasLoss = true
-        listener.onLoss(this, now, true)
+        listener.onLoss(this, at, true)
     }
 
     /** Marca como perdidos os pacotes cujo prazo venceu (ou todos os pendentes, se [force] e o ping for finito). */

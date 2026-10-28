@@ -84,18 +84,12 @@ class DiagnosticPage(
     private fun buildDiagnosticCard(): View {
         val card = ui.card()
         card.addView(ui.tv("DIAGNÓSTICO COMPLETO", 11f, ui.cyan, bold = true, spacing = 0.1f))
-        card.addView(
-            ui.tv(
-                "Testa a conexão camada por camada (rede, IP, roteador, internet, DNS e navegação) e aponta onde está a falha. Use no Wi-Fi do cliente.",
-                12f, ui.muted
-            ).apply { setPadding(0, ui.dp(4), 0, ui.dp(10)) }
-        )
         val buttons = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
         diagStart = ui.button("▶ INICIAR DIAGNÓSTICO", ui.green, android.graphics.Color.rgb(5, 20, 10)) { startDiagnostic() }
         diagStop = ui.button("PARAR", android.graphics.Color.rgb(58, 34, 34), ui.white, android.graphics.Color.rgb(90, 50, 50)) { stopDiagnostic() }
         buttons.addView(diagStart, ui.lp(0, ui.dp(46), 2f))
         buttons.addView(diagStop, ui.lp(0, ui.dp(46), 1f).apply { marginStart = ui.dp(8) })
-        card.addView(buttons, ui.lp(-1, -2))
+        card.addView(buttons, ui.lp(-1, -2).apply { topMargin = ui.dp(10) })
         return card
     }
 
@@ -126,10 +120,6 @@ class DiagnosticPage(
     private fun buildSpeedCard(): View {
         val card = ui.card()
         card.addView(ui.tv("TESTE DE VELOCIDADE", 11f, ui.green, bold = true, spacing = 0.1f))
-        card.addView(
-            ui.tv("Mede download, upload e latência até a internet usando a conexão do celular.", 12f, ui.muted)
-                .apply { setPadding(0, ui.dp(4), 0, ui.dp(10)) }
-        )
 
         val valueRow = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -141,7 +131,7 @@ class DiagnosticPage(
         valueRow.addView(View(activity), ui.lp(0, 1, 1f))
         speedPhase = ui.tv("", 11f, ui.cyan, bold = true, spacing = 0.08f).apply { setPadding(0, 0, 0, ui.dp(8)) }
         valueRow.addView(speedPhase)
-        card.addView(valueRow, ui.lp(-1, -2))
+        card.addView(valueRow, ui.lp(-1, -2).apply { topMargin = ui.dp(10) })
 
         speedBar = MeterBar(activity)
         card.addView(speedBar, ui.lp(-1, -2).apply { topMargin = ui.dp(6); bottomMargin = ui.dp(12) })
