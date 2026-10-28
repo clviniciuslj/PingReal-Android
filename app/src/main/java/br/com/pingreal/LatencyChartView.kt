@@ -17,12 +17,15 @@ import kotlin.math.roundToLong
 import kotlin.math.sqrt
 
 /**
- * Gráfico de latência em tempo real.
+ * Gráfico de latência em tempo real, com uma ou mais séries.
  *
- * A curva é uma interpolação cúbica monotônica (Fritsch–Carlson), amostrada pixel a pixel, então
+ * Cada curva é uma interpolação cúbica monotônica (Fritsch–Carlson), amostrada pixel a pixel, então
  * nunca "estoura" abaixo de zero nem faz picos falsos. O eixo X é o tempo real: o gráfico rola
- * continuamente a cada quadro, e a ponta direita fica [DELAY_MS] atrás do relógio para que a
- * curva já esteja fechada quando aparece na tela.
+ * continuamente a cada quadro, e a ponta direita fica [DELAY_MS] atrás do relógio, só o
+ * bastante para a resposta (RTT) já ter chegado quando o ponto é desenhado.
+ *
+ * Com uma série só, a curva ganha preenchimento e o ponto atual muda de cor conforme a latência.
+ * Com várias, cada série usa a sua cor.
  */
 class LatencyChartView(context: Context) : View(context) {
 
@@ -30,8 +33,16 @@ class LatencyChartView(context: Context) : View(context) {
         val lost: Boolean get() = v < 0f
     }
 
+    private class Series(val color: Int) {
+        val samples = ArrayList<Sample>()
+        var tangents = FloatArray(64)
+    }
+
     companion object {
-        private const val DELAY_MS = 2200L
+        // Atraso entre o relógio e a ponta direita. Precisa cobrir só o RTT da resposta;
+        // valores maiores deixam o gráfico visivelmente atrás do console.
+        private const val DELAY_MS = 600L
+        private const val HEAD_GRACE_MS = 2500L
         private const val WINDOW_MS = 60_000L
 
         private val GOOD = Color.rgb(74, 222, 128)
@@ -54,12 +65,12 @@ class LatencyChartView(context: Context) : View(context) {
     private val density = resources.displayMetrics.density
     private fun dp(v: Float) = v * density
 
-    private val samples = ArrayList<Sample>()
+    private var series: List<Series> = listOf(Series(GOOD))
     private var live = false
     private var displayT = System.currentTimeMillis() - DELAY_MS
     private var curMax = 50f
     private var lastFrame = 0L
-    private var tangents = FloatArray(64)
+    private var runHeadX = 0f
 
     private val path = Path()
     private val fillPath = Path()
@@ -79,30 +90,29 @@ class LatencyChartView(context: Context) : View(context) {
         textAlign = Paint.Align.CENTER
     }
     private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = GOOD
         style = Paint.Style.STROKE
-        strokeWidth = dp(2.4f)
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
     private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(38, 74, 222, 128)
         style = Paint.Style.STROKE
-        strokeWidth = dp(7f)
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    private val lossPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(70, 248, 113, 113)
-        strokeWidth = dp(2f)
-    }
-    private val lossDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = BAD }
+    private val lossPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = dp(2f) }
+    private val lossDotPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val haloPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
+    /** Define as séries (uma cor por alvo) e limpa os dados. */
+    fun setSeries(colors: IntArray) {
+        series = if (colors.isEmpty()) listOf(Series(GOOD)) else colors.map { Series(it) }
+        clear()
+    }
+
     fun clear() {
-        samples.clear()
+        series.forEach { it.samples.clear() }
         curMax = 50f
         lastFrame = 0L
         displayT = System.currentTimeMillis() - DELAY_MS
@@ -115,17 +125,19 @@ class LatencyChartView(context: Context) : View(context) {
         postInvalidateOnAnimation()
     }
 
-    fun addSample(timeMs: Long, valueMs: Float) = insert(Sample(timeMs, max(0f, valueMs)))
+    fun addSample(index: Int, timeMs: Long, valueMs: Float) =
+        insert(index, Sample(timeMs, max(0f, valueMs)))
 
-    fun addLoss(timeMs: Long) = insert(Sample(timeMs, -1f))
+    fun addLoss(index: Int, timeMs: Long) = insert(index, Sample(timeMs, -1f))
 
-    private fun insert(sample: Sample) {
-        var i = samples.size
-        while (i > 0 && samples[i - 1].t > sample.t) i--
-        samples.add(i, sample)
+    private fun insert(index: Int, sample: Sample) {
+        val list = series.getOrNull(index)?.samples ?: return
+        var i = list.size
+        while (i > 0 && list[i - 1].t > sample.t) i--
+        list.add(i, sample)
 
         val cutoff = System.currentTimeMillis() - WINDOW_MS * 2
-        while (samples.size > 2 && samples[0].t < cutoff) samples.removeAt(0)
+        while (list.size > 2 && list[0].t < cutoff) list.removeAt(0)
 
         postInvalidateOnAnimation()
     }
@@ -145,9 +157,13 @@ class LatencyChartView(context: Context) : View(context) {
         val dt = if (lastFrame == 0L) 16L else (now - lastFrame).coerceIn(1L, 100L)
         lastFrame = now
         var animating = false
+        val single = series.size == 1
+
+        val lastSampleT = series.maxOfOrNull { it.samples.lastOrNull()?.t ?: Long.MIN_VALUE }
+            ?.takeIf { it != Long.MIN_VALUE }
 
         // Tempo exibido na ponta direita do gráfico.
-        val targetT = if (live) now - DELAY_MS else (samples.lastOrNull()?.t ?: displayT)
+        val targetT = if (live) now - DELAY_MS else (lastSampleT ?: displayT)
         if (live) {
             displayT = targetT
         } else {
@@ -166,10 +182,14 @@ class LatencyChartView(context: Context) : View(context) {
         val xRight = w - dp(8f)
         val winStart = displayT - WINDOW_MS
 
-        // Escala vertical suave.
+        // Escala vertical suave (considera todas as séries).
         var visibleMax = 0f
-        for (s in samples) {
-            if (!s.lost && s.t >= winStart - 3000 && s.t <= displayT + 3000) visibleMax = max(visibleMax, s.v)
+        for (s in series) {
+            for (sample in s.samples) {
+                if (!sample.lost && sample.t >= winStart - 3000 && sample.t <= displayT + 3000) {
+                    visibleMax = max(visibleMax, sample.v)
+                }
+            }
         }
         val targetMax = niceCeil(max(visibleMax * 1.2f, 20f))
         val maxDiff = targetMax - curMax
@@ -193,38 +213,51 @@ class LatencyChartView(context: Context) : View(context) {
         }
         canvas.drawLine(0f, bottom, w, bottom, gridPaint)
 
-        if (samples.isEmpty()) {
+        if (series.all { it.samples.isEmpty() }) {
             canvas.drawText(placeholder, w / 2f, (top + bottom) / 2f, emptyPaint)
             if (animating || live) postInvalidateOnAnimation()
             return
         }
 
-        // Perdas
-        for (s in samples) {
-            if (!s.lost || s.t < winStart || s.t > displayT) continue
-            val x = xOf(s.t)
-            canvas.drawLine(x, top, x, bottom, lossPaint)
-            canvas.drawCircle(x, bottom, dp(3f), lossDotPaint)
+        val heads = FloatArray(series.size) { Float.NaN }
+        val headXs = FloatArray(series.size) { xRight }
+
+        for ((index, s) in series.withIndex()) {
+            val list = s.samples
+
+            // Perdas
+            val lossColor = if (single) BAD else s.color
+            lossPaint.color = Color.argb(70, Color.red(lossColor), Color.green(lossColor), Color.blue(lossColor))
+            lossDotPaint.color = lossColor
+            for (sample in list) {
+                if (!sample.lost || sample.t < winStart || sample.t > displayT) continue
+                val x = xOf(sample.t)
+                canvas.drawLine(x, top, x, bottom, lossPaint)
+                canvas.drawCircle(x, bottom, dp(3f), lossDotPaint)
+            }
+
+            // Trechos contínuos (separados por perdas)
+            var i = 0
+            val n = list.size
+            while (i < n) {
+                if (list[i].lost) { i++; continue }
+                var j = i
+                while (j + 1 < n && !list[j + 1].lost) j++
+                val head = drawRun(canvas, s, i, j, winStart, xRight, bottom, single, ::xOf, ::yOf)
+                if (!head.isNaN()) {
+                    heads[index] = head
+                    headXs[index] = runHeadX
+                }
+                i = j + 1
+            }
         }
 
-        // Trechos contínuos (separados por perdas)
-        var headValue = Float.NaN
-        var i = 0
-        val n = samples.size
-        while (i < n) {
-            if (samples[i].lost) { i++; continue }
-            var j = i
-            while (j + 1 < n && !samples[j + 1].lost) j++
-            val head = drawRun(canvas, i, j, winStart, xRight, bottom, ::xOf, ::yOf)
-            if (!head.isNaN()) headValue = head
-            i = j + 1
-        }
-
-        // Ponto na ponta (valor atual)
-        if (!headValue.isNaN()) {
-            val x = xRight
+        // Ponto na ponta (valor atual de cada série)
+        for ((index, headValue) in heads.withIndex()) {
+            if (headValue.isNaN()) continue
+            val x = headXs[index]
             val y = yOf(headValue)
-            val color = colorFor(headValue.toDouble())
+            val color = if (single) colorFor(headValue.toDouble()) else series[index].color
             if (live) {
                 val phase = (now % 1400L) / 1400f
                 haloPaint.color = Color.argb(((1f - phase) * 90).toInt(), Color.red(color), Color.green(color), Color.blue(color))
@@ -242,25 +275,28 @@ class LatencyChartView(context: Context) : View(context) {
     /** Desenha um trecho [from..to] de amostras válidas. Devolve o valor na ponta direita, se coberta. */
     private fun drawRun(
         canvas: Canvas,
+        s: Series,
         from: Int,
         to: Int,
         winStart: Long,
         xRight: Float,
         bottom: Float,
+        single: Boolean,
         xOf: (Long) -> Float,
         yOf: (Float) -> Float
     ): Float {
-        val t0 = samples[from].t
-        val t1 = samples[to].t
+        val list = s.samples
+        val t0 = list[from].t
+        val t1 = list[to].t
         if (t1 < winStart || t0 > displayT) return Float.NaN
 
         if (from == to) {
-            dotPaint.color = colorFor(samples[from].v.toDouble())
-            canvas.drawCircle(xOf(t0), yOf(samples[from].v), dp(3f), dotPaint)
-            return if (t0 == displayT) samples[from].v else Float.NaN
+            dotPaint.color = if (single) colorFor(list[from].v.toDouble()) else s.color
+            canvas.drawCircle(xOf(t0), yOf(list[from].v), dp(3f), dotPaint)
+            return headOf(list[from].v, t0, xOf)
         }
 
-        computeTangents(from, to)
+        computeTangents(s, from, to)
 
         val startT = max(t0, winStart)
         val endT = min(t1, displayT)
@@ -275,8 +311,8 @@ class LatencyChartView(context: Context) : View(context) {
         var x = 0f
         var v = 0f
         while (true) {
-            while (k < to - 1 && samples[k + 1].t <= t) k++
-            v = hermite(k, t)
+            while (k < to - 1 && list[k + 1].t <= t) k++
+            v = hermite(s, k, t)
             x = xOf(t)
             val y = yOf(v)
             if (first) {
@@ -294,21 +330,42 @@ class LatencyChartView(context: Context) : View(context) {
         fillPath.lineTo(x, bottom)
         fillPath.close()
 
-        canvas.drawPath(fillPath, fillPaint)
+        if (single) canvas.drawPath(fillPath, fillPaint)
+
+        glowPaint.color = Color.argb(38, Color.red(s.color), Color.green(s.color), Color.blue(s.color))
+        glowPaint.strokeWidth = if (single) dp(7f) else dp(5f)
+        linePaint.color = s.color
+        linePaint.strokeWidth = if (single) dp(2.4f) else dp(2f)
         canvas.drawPath(path, glowPaint)
         canvas.drawPath(path, linePaint)
 
-        return if (t0 <= displayT && t1 >= displayT) v else Float.NaN
+        return if (t0 <= displayT && t1 >= displayT) {
+            runHeadX = xRight
+            v
+        } else {
+            headOf(list[to].v, t1, xOf)
+        }
+    }
+
+    /**
+     * Ponto "atual" quando a última amostra ainda não alcançou a ponta direita (próxima resposta a caminho):
+     * o ponto fica na própria amostra, em vez de sumir.
+     */
+    private fun headOf(value: Float, t: Long, xOf: (Long) -> Float): Float {
+        if (t > displayT || displayT - t > HEAD_GRACE_MS) return Float.NaN
+        runHeadX = xOf(t)
+        return value
     }
 
     /** Tangentes de Fritsch–Carlson: garantem curva monotônica entre pontos (sem overshoot). */
-    private fun computeTangents(from: Int, to: Int) {
-        if (tangents.size < samples.size) tangents = FloatArray(samples.size + 64)
-        val m = tangents
+    private fun computeTangents(s: Series, from: Int, to: Int) {
+        val list = s.samples
+        if (s.tangents.size < list.size) s.tangents = FloatArray(list.size + 64)
+        val m = s.tangents
         val d = FloatArray(to - from)
         for (i in from until to) {
-            val h = max(1f, (samples[i + 1].t - samples[i].t).toFloat())
-            d[i - from] = (samples[i + 1].v - samples[i].v) / h
+            val h = max(1f, (list[i + 1].t - list[i].t).toFloat())
+            d[i - from] = (list[i + 1].v - list[i].v) / h
         }
         m[from] = d[0]
         m[to] = d[to - from - 1]
@@ -325,9 +382,9 @@ class LatencyChartView(context: Context) : View(context) {
             } else {
                 val a = m[i] / di
                 val b = m[i + 1] / di
-                val s = a * a + b * b
-                if (s > 9f) {
-                    val tau = 3f / sqrt(s)
+                val sq = a * a + b * b
+                if (sq > 9f) {
+                    val tau = 3f / sqrt(sq)
                     m[i] = tau * a * di
                     m[i + 1] = tau * b * di
                 }
@@ -335,17 +392,17 @@ class LatencyChartView(context: Context) : View(context) {
         }
     }
 
-    private fun hermite(k: Int, t: Long): Float {
-        val a = samples[k]
-        val b = samples[k + 1]
+    private fun hermite(s: Series, k: Int, t: Long): Float {
+        val a = s.samples[k]
+        val b = s.samples[k + 1]
         val h = max(1f, (b.t - a.t).toFloat())
-        val s = ((t - a.t) / h).coerceIn(0f, 1f)
-        val s2 = s * s
-        val s3 = s2 * s
-        return (2 * s3 - 3 * s2 + 1) * a.v +
-            (s3 - 2 * s2 + s) * h * tangents[k] +
-            (-2 * s3 + 3 * s2) * b.v +
-            (s3 - s2) * h * tangents[k + 1]
+        val u = ((t - a.t) / h).coerceIn(0f, 1f)
+        val u2 = u * u
+        val u3 = u2 * u
+        return (2 * u3 - 3 * u2 + 1) * a.v +
+            (u3 - 2 * u2 + u) * h * s.tangents[k] +
+            (-2 * u3 + 3 * u2) * b.v +
+            (u3 - u2) * h * s.tangents[k + 1]
     }
 
     private fun niceCeil(v: Float): Float {

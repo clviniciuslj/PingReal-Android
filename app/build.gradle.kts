@@ -25,3 +25,8 @@ android {
         versionName = "1.0"
     }
 }
+
+dependencies {
+    // FileProvider, usado para compartilhar a imagem do relatório.
+    implementation("androidx.core:core:1.13.1")
+}

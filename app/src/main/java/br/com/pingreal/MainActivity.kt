@@ -1,16 +1,23 @@
 package br.com.pingreal
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.content.res.ColorStateList
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.net.ConnectivityManager
+import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.wifi.WifiManager
@@ -18,11 +25,15 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.Editable
 import android.text.InputType
 import android.text.SpannableString
 import android.text.SpannableStringBuilder
 import android.text.Spanned
+import android.text.StaticLayout
+import android.text.TextPaint
 import android.text.TextUtils
+import android.text.TextWatcher
 import android.text.style.ForegroundColorSpan
 import android.view.Gravity
 import android.view.View
@@ -32,12 +43,18 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.content.FileProvider
+import java.io.File
+import java.io.FileOutputStream
 import java.net.Inet4Address
 import java.net.InetAddress
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Callable
 import java.util.concurrent.CopyOnWriteArrayList
@@ -47,37 +64,17 @@ import kotlin.math.roundToInt
 
 class MainActivity : Activity() {
 
-    private enum class Mode { IDLE, PING, TRACE }
+    private enum class Mode { IDLE, PING, TRACE, DIAG }
 
-    private class PingStats {
-        var received = 0
-        var lost = 0
-        var min = Double.MAX_VALUE
-        var max = 0.0
-        var sum = 0.0
-        var last = -1.0
-        var lastWasLoss = false
-        var jitterSum = 0.0
-        var jitterN = 0
+    private class Target(
+        val label: String,
+        val host: String,
+        val continuous: Boolean,
+        val count: Int,
+        val role: String = ""
+    )
 
-        val sent: Int get() = received + lost
-        val avg: Double get() = if (received > 0) sum / received else 0.0
-        val jitter: Double get() = if (jitterN > 0) jitterSum / jitterN else 0.0
-        val lossPct: Double get() = if (sent > 0) lost * 100.0 / sent else 0.0
-
-        fun add(ms: Double) {
-            if (last >= 0 && !lastWasLoss) {
-                jitterSum += kotlin.math.abs(ms - last)
-                jitterN++
-            }
-            received++
-            sum += ms
-            if (ms < min) min = ms
-            if (ms > max) max = ms
-            last = ms
-            lastWasLoss = false
-        }
-    }
+    private class RowViews(val cur: TextView, val avg: TextView, val loss: TextView)
 
     private class Probe(
         val address: String?,
@@ -94,34 +91,28 @@ class MainActivity : Activity() {
     )
 
     private companion object {
+        const val MAX_TARGETS = 4
         const val MAX_HOPS = 30
         const val PROBES_PER_HOP = 3
         const val SILENT_HOPS_LIMIT = 6
-        const val LOSS_TIMEOUT_MS = 2000L
+        const val DIAG_COUNT = 8
         const val MAX_CONSOLE_LINES = 600
         const val TRIM_LINES = 100
+        const val MAX_HISTORY = 12
         const val DASH = "—"
         const val PREFS = "pingreal"
         const val PREF_HOST = "host"
+        const val PREF_FAVS = "favorites"
+        const val PREF_HIST = "history"
 
         val HOST_REGEX = Regex("[A-Za-z0-9._:%-]+")
         val WHITESPACE = Regex("\\s+")
-
-        val REPLY_STRICT = Regex(
-            """(\d+)\s+bytes from\s+(.+?):?\s+icmp_\w+=(\d+)\s+ttl=(\d+)\s+time[=<]\s*([\d.]+)\s*ms""",
-            RegexOption.IGNORE_CASE
-        )
-        val REPLY_LOOSE = Regex(
-            """(\d+)\s+bytes from\s+(.+?):.*?\bttl[= ](\d+).*?\btime[=<]\s*([\d.]+)\s*ms""",
-            RegexOption.IGNORE_CASE
-        )
         val TTL_FIELD = Regex("""\bttl[= ]\d+""", RegexOption.IGNORE_CASE)
         val TIME_FIELD = Regex("""time[=<]\s*([\d.]+)\s*ms""", RegexOption.IGNORE_CASE)
         val FROM_ADDR = Regex(
             """\bfrom\s+(?:\S+\s+\()?([0-9a-fA-F:.]+)\)?""",
             RegexOption.IGNORE_CASE
         )
-
         val EXCEEDED = listOf(
             "time to live exceeded", "ttl exceeded", "time exceeded",
             "hop limit", "ttl expired"
@@ -133,22 +124,33 @@ class MainActivity : Activity() {
     private val panel = Color.rgb(17, 25, 20)
     private val panelStroke = Color.rgb(30, 43, 35)
     private val green = Color.rgb(74, 222, 128)
+    private val cyan = Color.rgb(56, 189, 248)
+    private val violet = Color.rgb(192, 132, 252)
+    private val orange = Color.rgb(251, 146, 60)
     private val amber = Color.rgb(251, 191, 36)
     private val red = Color.rgb(248, 113, 113)
     private val white = Color.rgb(232, 238, 233)
     private val muted = Color.rgb(125, 143, 132)
     private val consoleBg = Color.rgb(5, 9, 7)
+    private val seriesColors = intArrayOf(green, cyan, violet, orange)
 
     // ---- views ----
     private lateinit var root: LinearLayout
     private lateinit var hostInput: EditText
+    private lateinit var favButton: TextView
+    private lateinit var chipsScroll: HorizontalScrollView
+    private lateinit var chipsRow: LinearLayout
     private lateinit var runButton: Button
     private lateinit var stopButton: Button
     private lateinit var traceButton: Button
+    private lateinit var diagButton: Button
     private lateinit var statusText: TextView
     private lateinit var statusDot: GradientDrawable
     private lateinit var chart: LatencyChartView
+    private lateinit var chartSubtitle: TextView
     private lateinit var latencyNow: TextView
+    private lateinit var singleStats: LinearLayout
+    private lateinit var multiBox: LinearLayout
     private lateinit var statMin: TextView
     private lateinit var statAvg: TextView
     private lateinit var statMax: TextView
@@ -161,34 +163,32 @@ class MainActivity : Activity() {
     private lateinit var ipValue: TextView
     private lateinit var netValue: TextView
 
+    private val multiRows = ArrayList<RowViews>()
+
     // ---- estado ----
     private var mode = Mode.IDLE
+    private var lastRunMode = Mode.IDLE
     @Volatile private var stopRequested = false
 
     private val handler = Handler(Looper.getMainLooper())
     private val executor = Executors.newSingleThreadExecutor()
+    private val sessionPool = Executors.newCachedThreadPool()
     private val probePool = Executors.newFixedThreadPool(PROBES_PER_HOP)
     private val activeProcesses = CopyOnWriteArrayList<Process>()
 
     private val buffer = SpannableStringBuilder()
     private var consoleLines = 0
 
-    // sessão de ping (somente thread da UI)
-    private var stats = PingStats()
-    private var sessionHost = ""
-    private var sessionContinuous = true
-    private var sessionCount = 0
-    private var slotStart = 0L
-    private var slotAnchored = false
-    private var nextSeq = 1
-    private var lastSeq = 0
-    private var hardError = false
-    private val answered = HashSet<Int>()
+    private var sessions: List<PingSession> = emptyList()
+    private var diagRoles: List<String> = emptyList()
+    private var diagLines: List<String> = emptyList()
+    private val emptyStats = PingStats()
+    private var netInfo = NetInfo(DASH, DASH, DASH, DASH)
 
     private val lossTick = object : Runnable {
         override fun run() {
-            if (mode != Mode.PING) return
-            checkLosses(false)
+            if (mode != Mode.PING && mode != Mode.DIAG) return
+            sessions.forEach { it.tick() }
             updateStats()
             handler.postDelayed(this, 500)
         }
@@ -200,9 +200,36 @@ class MainActivity : Activity() {
         override fun onAvailable(network: Network) = scheduleFooter()
         override fun onLost(network: Network) = scheduleFooter()
         override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) = scheduleFooter()
-        override fun onLinkPropertiesChanged(network: Network, props: android.net.LinkProperties) = scheduleFooter()
+        override fun onLinkPropertiesChanged(network: Network, props: LinkProperties) = scheduleFooter()
     }
     private var callbackRegistered = false
+
+    private val sessionListener = object : PingSession.Listener {
+        override fun onReply(session: PingSession, reply: PingReply, sampleTime: Long) {
+            chart.addSample(sessions.indexOf(session), sampleTime, reply.timeMs.toFloat())
+            val shown = if (reply.timeMs < 1) "<1" else reply.timeMs.roundToInt().toString()
+            append(
+                "${prefix(session)}Resposta de ${reply.address}: bytes=32 tempo=${shown}ms TTL=${reply.ttl}",
+                if (sessions.size > 1) session.color else green
+            )
+            updateStats()
+        }
+
+        override fun onLoss(session: PingSession, sendTime: Long) {
+            chart.addLoss(sessions.indexOf(session), sendTime)
+            append("${prefix(session)}Esgotado o tempo limite da solicitação.", amber)
+            updateStats()
+        }
+
+        override fun onErrorLine(session: PingSession, line: String) {
+            append("${prefix(session)}$line", red)
+        }
+
+        override fun onFinished(session: PingSession, error: String?) {
+            if (mode == Mode.PING) printSummary(session, error)
+            if (sessions.all { it.finished }) completeRun()
+        }
+    }
 
     // =====================================================================
     // Ciclo de vida
@@ -218,7 +245,7 @@ class MainActivity : Activity() {
         buildUi()
         setContentView(root)
 
-        hostInput.setText(getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_HOST, "") ?: "")
+        hostInput.setText(prefs().getString(PREF_HOST, "") ?: "")
         setMode(Mode.IDLE)
         updateStats()
         updateNetworkFooter()
@@ -227,8 +254,7 @@ class MainActivity : Activity() {
     override fun onStart() {
         super.onStart()
         try {
-            val cm = getSystemService(ConnectivityManager::class.java)
-            cm.registerDefaultNetworkCallback(networkCallback)
+            getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(networkCallback)
             callbackRegistered = true
         } catch (_: Exception) {
             callbackRegistered = false
@@ -250,11 +276,15 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         stopRequested = true
         handler.removeCallbacksAndMessages(null)
+        sessions.forEach { it.stop() }
         activeProcesses.forEach { it.destroy() }
         executor.shutdownNow()
+        sessionPool.shutdownNow()
         probePool.shutdownNow()
         super.onDestroy()
     }
+
+    private fun prefs() = getSharedPreferences(PREFS, MODE_PRIVATE)
 
     // =====================================================================
     // Interface
@@ -314,9 +344,8 @@ class MainActivity : Activity() {
         Button(this).apply {
             text = label
             isAllCaps = false
-            textSize = 13f
+            textSize = 12f
             typeface = Typeface.DEFAULT_BOLD
-            letterSpacing = 0.04f
             setTextColor(textColor)
             background = rippled(fill, 12f, stroke)
             stateListAnimator = null
@@ -324,7 +353,7 @@ class MainActivity : Activity() {
             minHeight = 0
             minimumWidth = 0
             minimumHeight = 0
-            setPadding(dp(8), 0, dp(8), 0)
+            setPadding(dp(4), 0, dp(4), 0)
             setOnClickListener { onClick() }
         }
 
@@ -396,7 +425,7 @@ class MainActivity : Activity() {
         val titleRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(2), dp(4), dp(2), dp(12))
+            setPadding(dp(2), dp(4), dp(2), dp(10))
         }
         titleRow.addView(tv("⌁", 22f, green, bold = true))
         titleRow.addView(
@@ -412,13 +441,17 @@ class MainActivity : Activity() {
         titleRow.addView(View(this).apply { background = statusDot }, lp(dp(8), dp(8)).apply { marginStart = dp(8) })
         root.addView(titleRow, lp(-1, -2))
 
-        // ---- entrada ----
+        // ---- entrada + favorito ----
+        val inputRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
         hostInput = EditText(this).apply {
             setSingleLine(true)
             textSize = 15f
             setTextColor(white)
             setHintTextColor(muted)
-            hint = "IP ou host  (ex.: 8.8.8.8 -n 10)"
+            hint = "IP ou host  (vários: 8.8.8.8, 1.1.1.1)"
             typeface = Typeface.MONOSPACE
             background = roundRect(panel, 12f, panelStroke)
             setPadding(dp(14), 0, dp(14), 0)
@@ -434,19 +467,48 @@ class MainActivity : Activity() {
                     false
                 }
             }
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                override fun afterTextChanged(s: Editable?) = updateStar()
+            })
         }
-        root.addView(hostInput, lp(-1, dp(50)))
+        favButton = tv("☆", 22f, muted).apply {
+            gravity = Gravity.CENTER
+            background = rippled(panel, 12f, panelStroke)
+            isClickable = true
+            contentDescription = "Favoritar"
+            setOnClickListener { toggleFavorite() }
+        }
+        inputRow.addView(hostInput, lp(0, dp(50), 1f))
+        inputRow.addView(favButton, lp(dp(50), dp(50)).apply { marginStart = dp(8) })
+        root.addView(inputRow, lp(-1, -2))
 
+        // ---- atalhos (gateway, DNS, favoritos, recentes) ----
+        chipsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        chipsScroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            addView(chipsRow, ViewGroup.LayoutParams(-2, -2))
+        }
+        root.addView(chipsScroll, lp(-1, -2).apply { topMargin = dp(8) })
+
+        // ---- botões ----
         val buttons = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, dp(10), 0, dp(10))
         }
-        runButton = actionButton("▶  INICIAR", green, Color.rgb(5, 20, 10)) { startPing() }
-        stopButton = actionButton("■  PARAR", Color.rgb(58, 34, 34), white, Color.rgb(90, 50, 50)) { stopRun() }
+        runButton = actionButton("▶ INICIAR", green, Color.rgb(5, 20, 10)) { startPing() }
+        stopButton = actionButton("PARAR", Color.rgb(58, 34, 34), white, Color.rgb(90, 50, 50)) { stopRun() }
         traceButton = actionButton("TRACE", panel, green, panelStroke) { startTraceRoute() }
-        buttons.addView(runButton, lp(0, dp(46), 1.35f))
-        buttons.addView(stopButton, lp(0, dp(46), 1f).apply { marginStart = dp(8) })
-        buttons.addView(traceButton, lp(0, dp(46), 1f).apply { marginStart = dp(8) })
+        diagButton = actionButton("DIAG", panel, cyan, panelStroke) { startDiagnostic() }
+        buttons.addView(runButton, lp(0, dp(46), 1.5f))
+        buttons.addView(stopButton, lp(0, dp(46), 1f).apply { marginStart = dp(6) })
+        buttons.addView(traceButton, lp(0, dp(46), 1f).apply { marginStart = dp(6) })
+        buttons.addView(diagButton, lp(0, dp(46), 1f).apply { marginStart = dp(6) })
         root.addView(buttons, lp(-1, -2))
 
         // ---- gráfico ----
@@ -455,10 +517,11 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
+        chartSubtitle = tv("últimos 60 s", 10f, muted).apply { setPadding(0, dp(1), 0, 0) }
         val chartTitle = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(tv("LATÊNCIA", 11f, green, bold = true, spacing = 0.1f))
-            addView(tv("últimos 60 s", 10f, muted).apply { setPadding(0, dp(1), 0, 0) })
+            addView(chartSubtitle)
         }
         latencyNow = tv("— ms", 24f, white, bold = true, mono = true)
         chartHeader.addView(chartTitle, lp(0, -2, 1f))
@@ -466,17 +529,23 @@ class MainActivity : Activity() {
         chartCard.addView(chartHeader, lp(-1, -2))
 
         chart = LatencyChartView(this)
-        chartCard.addView(chart, lp(-1, dp(130)).apply { topMargin = dp(6); bottomMargin = dp(8) })
+        chartCard.addView(chart, lp(-1, dp(115)).apply { topMargin = dp(6); bottomMargin = dp(8) })
 
-        val statsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        singleStats = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val (minCell, minV) = statCell("MÍN")
         val (avgCell, avgV) = statCell("MÉD")
         val (maxCell, maxV) = statCell("MÁX")
         val (jitCell, jitV) = statCell("JITTER")
         val (lossCell, lossV) = statCell("PERDA")
         statMin = minV; statAvg = avgV; statMax = maxV; statJitter = jitV; statLoss = lossV
-        for (cell in listOf(minCell, avgCell, maxCell, jitCell, lossCell)) statsRow.addView(cell, lp(0, -2, 1f))
-        chartCard.addView(statsRow, lp(-1, -2))
+        for (cell in listOf(minCell, avgCell, maxCell, jitCell, lossCell)) singleStats.addView(cell, lp(0, -2, 1f))
+        chartCard.addView(singleStats, lp(-1, -2))
+
+        multiBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+        }
+        chartCard.addView(multiBox, lp(-1, -2))
         root.addView(chartCard, lp(-1, -2))
 
         // ---- console ----
@@ -491,6 +560,7 @@ class MainActivity : Activity() {
             setPadding(dp(10), 0, 0, 0)
         }
         consoleHeader.addView(tv("CONSOLE", 11f, green, bold = true, spacing = 0.1f), lp(0, -2, 1f))
+        consoleHeader.addView(textAction("ENVIAR") { showShareDialog() })
         consoleHeader.addView(textAction("COPIAR") { copyConsole() })
         consoleHeader.addView(textAction("LIMPAR") { if (mode == Mode.IDLE) clearConsole() })
         consoleCard.addView(consoleHeader, lp(-1, -2))
@@ -525,25 +595,83 @@ class MainActivity : Activity() {
     private fun setMode(newMode: Mode) {
         mode = newMode
         val idle = newMode == Mode.IDLE
-        runButton.isEnabled = idle
-        traceButton.isEnabled = idle
+        for (b in listOf(runButton, traceButton, diagButton)) {
+            b.isEnabled = idle
+            b.alpha = if (idle) 1f else 0.4f
+        }
         stopButton.isEnabled = !idle
-        runButton.alpha = if (idle) 1f else 0.4f
-        traceButton.alpha = if (idle) 1f else 0.4f
         stopButton.alpha = if (idle) 0.4f else 1f
 
         val (label, color) = when (newMode) {
             Mode.IDLE -> "PRONTO" to muted
             Mode.PING -> "PING ATIVO" to green
             Mode.TRACE -> "TRACEROUTE" to amber
+            Mode.DIAG -> "DIAGNÓSTICO" to cyan
         }
         statusText.text = label
         statusText.setTextColor(color)
         statusDot.setColor(color)
     }
 
+    // =====================================================================
+    // Estatísticas (uma linha de resumo ou uma linha por alvo)
+    // =====================================================================
+
+    private fun buildStatsPanel() {
+        val multi = sessions.size > 1
+        singleStats.visibility = if (multi) View.GONE else View.VISIBLE
+        multiBox.visibility = if (multi) View.VISIBLE else View.GONE
+        latencyNow.visibility = if (multi) View.GONE else View.VISIBLE
+        chartSubtitle.text = if (multi) "${sessions.size} alvos · últimos 60 s" else "últimos 60 s"
+
+        multiBox.removeAllViews()
+        multiRows.clear()
+        if (!multi) return
+
+        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        header.addView(View(this), lp(0, 1, 1f))
+        for ((text, width) in listOf("ATUAL" to 56, "MÉD" to 56, "PERDA" to 44)) {
+            header.addView(
+                tv(text, 9f, muted, bold = true, spacing = 0.08f).apply { gravity = Gravity.END },
+                lp(dp(width), -2)
+            )
+        }
+        multiBox.addView(header, lp(-1, -2))
+
+        for (s in sessions) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(3), 0, dp(3))
+            }
+            val dot = View(this).apply {
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(s.color)
+                }
+            }
+            val name = tv(s.label, 11f, white, mono = true).apply {
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+            }
+            val cur = tv(DASH, 11f, white, bold = true, mono = true).apply { gravity = Gravity.END }
+            val avg = tv(DASH, 11f, white, mono = true).apply { gravity = Gravity.END }
+            val loss = tv(DASH, 11f, white, mono = true).apply { gravity = Gravity.END }
+            row.addView(dot, lp(dp(8), dp(8)))
+            row.addView(name, lp(0, -2, 1f).apply { marginStart = dp(8) })
+            row.addView(cur, lp(dp(56), -2))
+            row.addView(avg, lp(dp(56), -2))
+            row.addView(loss, lp(dp(44), -2))
+            multiBox.addView(row, lp(-1, -2))
+            multiRows.add(RowViews(cur, avg, loss))
+        }
+    }
+
     private fun updateStats() {
-        val s = stats
+        if (sessions.size > 1) updateMultiStats() else updateSingleStats(sessions.firstOrNull()?.stats ?: emptyStats)
+    }
+
+    private fun updateSingleStats(s: PingStats) {
         when {
             s.lastWasLoss -> {
                 latencyNow.text = "perdido"
@@ -561,13 +689,133 @@ class MainActivity : Activity() {
         statMin.text = if (s.received > 0) "${fmt(s.min)}ms" else DASH
         statAvg.text = if (s.received > 0) "${fmt(s.avg)}ms" else DASH
         statMax.text = if (s.received > 0) "${fmt(s.max)}ms" else DASH
-        statJitter.text = if (s.jitterN > 0) "${fmt(s.jitter)}ms" else DASH
+        statJitter.text = if (s.jitterSamples > 0) "${fmt(s.jitter)}ms" else DASH
         statLoss.text = if (s.sent > 0) "${s.lossPct.roundToInt()}%" else DASH
         statLoss.setTextColor(if (s.lost > 0) red else white)
     }
 
+    private fun updateMultiStats() {
+        for ((i, s) in sessions.withIndex()) {
+            val row = multiRows.getOrNull(i) ?: continue
+            val st = s.stats
+            when {
+                st.lastWasLoss -> {
+                    row.cur.text = "perdido"
+                    row.cur.setTextColor(red)
+                }
+                st.last >= 0 -> {
+                    row.cur.text = "${fmt(st.last)}ms"
+                    row.cur.setTextColor(LatencyChartView.colorFor(st.last))
+                }
+                else -> {
+                    row.cur.text = DASH
+                    row.cur.setTextColor(white)
+                }
+            }
+            row.avg.text = if (st.received > 0) "${fmt(st.avg)}ms" else DASH
+            row.loss.text = if (st.sent > 0) "${st.lossPct.roundToInt()}%" else DASH
+            row.loss.setTextColor(if (st.lost > 0) red else white)
+        }
+    }
+
     private fun fmt(ms: Double): String =
         if (ms < 10) String.format(Locale.US, "%.1f", ms) else ms.roundToInt().toString()
+
+    // =====================================================================
+    // Favoritos e histórico
+    // =====================================================================
+
+    private fun loadList(key: String): MutableList<String> =
+        (prefs().getString(key, "") ?: "").split('\n').filter { it.isNotBlank() }.toMutableList()
+
+    private fun saveList(key: String, list: List<String>) {
+        prefs().edit().putString(key, list.joinToString("\n")).apply()
+    }
+
+    private fun addHistory(entry: String) {
+        val list = loadList(PREF_HIST)
+        list.remove(entry)
+        list.add(0, entry)
+        saveList(PREF_HIST, list.take(MAX_HISTORY))
+        refreshChips()
+    }
+
+    private fun toggleFavorite() {
+        val entry = hostInput.text.toString().trim()
+        if (entry.isEmpty()) {
+            Toast.makeText(this, "Digite um alvo para favoritar", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val favs = loadList(PREF_FAVS)
+        if (!favs.remove(entry)) favs.add(0, entry)
+        saveList(PREF_FAVS, favs)
+        refreshChips()
+    }
+
+    private fun updateStar() {
+        if (!::favButton.isInitialized || !::hostInput.isInitialized) return
+        val fav = hostInput.text.toString().trim().let { it.isNotEmpty() && it in loadList(PREF_FAVS) }
+        favButton.text = if (fav) "★" else "☆"
+        favButton.setTextColor(if (fav) amber else muted)
+    }
+
+    private fun usableIp(value: String): Boolean =
+        value != DASH && value != "N/D" && parseHost(value) != null
+
+    private fun chip(label: String, color: Int, onClick: () -> Unit, onLongClick: (() -> Unit)? = null): TextView =
+        tv(label, 11f, color, mono = true).apply {
+            maxLines = 1
+            setPadding(dp(11), dp(6), dp(11), dp(6))
+            background = rippled(panel, 14f, panelStroke)
+            isClickable = true
+            setOnClickListener { onClick() }
+            if (onLongClick != null) setOnLongClickListener { onLongClick(); true }
+        }
+
+    private fun refreshChips() {
+        chipsRow.removeAllViews()
+        fun add(view: View) = chipsRow.addView(view, lp(-2, -2).apply { marginEnd = dp(6) })
+        fun short(s: String) = if (s.length > 24) s.take(23) + "…" else s
+        fun fill(entry: String) {
+            hostInput.setText(entry)
+            hostInput.setSelection(entry.length)
+        }
+
+        if (usableIp(netInfo.gateway)) add(chip("⌂ Gateway", cyan, { addTarget(netInfo.gateway) }))
+        if (usableIp(netInfo.dns)) add(chip("DNS", cyan, { addTarget(netInfo.dns) }))
+
+        val favs = loadList(PREF_FAVS)
+        for (f in favs) {
+            add(chip("★ ${short(f)}", amber, { fill(f) }, {
+                favs.remove(f)
+                saveList(PREF_FAVS, favs)
+                Toast.makeText(this, "Favorito removido", Toast.LENGTH_SHORT).show()
+                refreshChips()
+            }))
+        }
+        for (h in loadList(PREF_HIST).filter { it !in favs }) {
+            add(chip(short(h), muted, { fill(h) }, {
+                saveList(PREF_HIST, loadList(PREF_HIST).filter { it != h })
+                Toast.makeText(this, "Removido do histórico", Toast.LENGTH_SHORT).show()
+                refreshChips()
+            }))
+        }
+
+        chipsScroll.visibility = if (chipsRow.childCount == 0) View.GONE else View.VISIBLE
+        updateStar()
+    }
+
+    /** Atalho de gateway/DNS: preenche o campo, ou acrescenta como mais um alvo se já houver texto. */
+    private fun addTarget(ip: String) {
+        val current = hostInput.text.toString().trim()
+        val text = when {
+            current.isEmpty() -> ip
+            current.split(',').any { it.trim().split(WHITESPACE).firstOrNull() == ip } -> current
+            else -> "$current, $ip"
+        }
+        hostInput.setText(text)
+        hostInput.setSelection(text.length)
+    }
 
     // =====================================================================
     // Console
@@ -622,6 +870,9 @@ class MainActivity : Activity() {
         runOnUiThread { if (!isFinishing && !isDestroyed) block() }
     }
 
+    private fun prefix(session: PingSession): String =
+        if (sessions.size > 1) "[${session.label}] " else ""
+
     // =====================================================================
     // Rodapé de rede
     // =====================================================================
@@ -632,15 +883,16 @@ class MainActivity : Activity() {
     }
 
     private fun updateNetworkFooter() {
-        val info = try {
+        netInfo = try {
             readNetworkInfo()
         } catch (_: Exception) {
             NetInfo("N/D", "N/D", "N/D", "Indisponível")
         }
-        gwValue.text = info.gateway
-        dnsValue.text = info.dns
-        ipValue.text = info.ip
-        netValue.text = info.type
+        gwValue.text = netInfo.gateway
+        dnsValue.text = netInfo.dns
+        ipValue.text = netInfo.ip
+        netValue.text = netInfo.type
+        refreshChips()
     }
 
     private fun cleanAddress(address: InetAddress?): String? =
@@ -722,27 +974,19 @@ class MainActivity : Activity() {
     }
 
     // =====================================================================
-    // Ping
+    // Ping (um ou vários alvos)
     // =====================================================================
 
     private fun parseHost(candidate: String): String? =
         candidate.takeIf { it.isNotBlank() && !it.startsWith("-") && it.matches(HOST_REGEX) }
 
-    private fun startPing() {
-        if (mode != Mode.IDLE) return
-
-        val raw = hostInput.text.toString().trim()
-        val parts = raw.split(WHITESPACE).filter { it.isNotBlank() }
-
-        if (parts.isEmpty()) {
-            append("Informe um IP ou host.", amber)
-            return
-        }
-
-        val host = parseHost(parts[0])
+    /** Interpreta um alvo no formato `host [-t] [-n N]`. Mostra o erro no console e devolve null se inválido. */
+    private fun parseSegment(segment: String): Target? {
+        val parts = segment.split(WHITESPACE).filter { it.isNotBlank() }
+        val host = parseHost(parts.firstOrNull().orEmpty())
         if (host == null) {
-            append("Endereço inválido.", red)
-            return
+            append("Endereço inválido: ${parts.firstOrNull().orEmpty()}", red)
+            return null
         }
 
         var continuous = true
@@ -758,13 +1002,13 @@ class MainActivity : Activity() {
                 }
                 "-n", "-c" -> {
                     if (countSpecified || index + 1 >= parts.size) {
-                        append("Quantidade inválida.", red)
-                        return
+                        append("Quantidade inválida em: $segment", red)
+                        return null
                     }
                     val parsed = parts[index + 1].toIntOrNull()
                     if (parsed == null || parsed !in 1..10000) {
                         append("Quantidade deve estar entre 1 e 10000.", red)
-                        return
+                        return null
                     }
                     count = parsed
                     countSpecified = true
@@ -773,161 +1017,77 @@ class MainActivity : Activity() {
                 }
                 else -> {
                     append("Parâmetro desconhecido: ${parts[index]}", red)
-                    return
+                    return null
                 }
             }
         }
+        return Target(host, host, continuous, count)
+    }
 
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(PREF_HOST, raw).apply()
-        hideKeyboard()
+    private fun startPing() {
+        if (mode != Mode.IDLE) return
 
-        val args = mutableListOf("/system/bin/ping", "-W", "1", "-s", "32")
-        if (!continuous) {
-            args.add("-c")
-            args.add(count.toString())
+        val raw = hostInput.text.toString().trim()
+        val segments = raw.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+
+        if (segments.isEmpty()) {
+            append("Informe um IP ou host.", amber)
+            return
         }
-        args.add(host)
+        if (segments.size > MAX_TARGETS) {
+            append("No máximo $MAX_TARGETS alvos ao mesmo tempo.", red)
+            return
+        }
+
+        val targets = ArrayList<Target>()
+        for (segment in segments) targets.add(parseSegment(segment) ?: return)
+
+        prefs().edit().putString(PREF_HOST, raw).apply()
+        addHistory(raw)
 
         append("")
         append("────────────────────────────", muted)
         append("> $raw", white)
-        append(if (continuous) "Ping contínuo para $host" else "Ping para $host ($count tentativas)", muted)
+        if (targets.size == 1) {
+            val t = targets[0]
+            append(
+                if (t.continuous) "Ping contínuo para ${t.host}" else "Ping para ${t.host} (${t.count} tentativas)",
+                muted
+            )
+        } else {
+            append("Ping simultâneo para ${targets.size} alvos", muted)
+        }
         append("")
 
-        stats = PingStats()
-        answered.clear()
-        nextSeq = 1
-        lastSeq = 0
-        hardError = false
-        slotAnchored = false
-        slotStart = System.currentTimeMillis()
-        sessionHost = host
-        sessionContinuous = continuous
-        sessionCount = count
+        startSessions(targets, Mode.PING)
+    }
+
+    private fun startSessions(targets: List<Target>, newMode: Mode) {
+        hideKeyboard()
         stopRequested = false
 
-        chart.clear()
+        val colors = IntArray(targets.size) { seriesColors[it % seriesColors.size] }
+        sessions = targets.mapIndexed { i, t ->
+            PingSession(t.label, t.host, t.continuous, t.count, colors[i], sessionListener, sessionPool, ::post)
+        }
+
+        chart.placeholder = "Aguardando respostas…"
+        chart.setSeries(colors)
         chart.setLive(true)
+        buildStatsPanel()
         updateStats()
-        setMode(Mode.PING)
+        setMode(newMode)
         handler.postDelayed(lossTick, 500)
 
-        executor.execute { runPingProcess(args) }
+        sessions.forEach { it.start() }
     }
 
-    private fun runPingProcess(args: List<String>) {
-        var error: String? = null
-        try {
-            val process = ProcessBuilder(args).redirectErrorStream(true).start()
-            activeProcesses.add(process)
-            try {
-                process.inputStream.bufferedReader().use { reader ->
-                    while (true) {
-                        val line = reader.readLine() ?: break
-                        if (line.isNotBlank()) post { handlePingLine(line) }
-                    }
-                }
-                process.waitFor()
-            } finally {
-                activeProcesses.remove(process)
-                process.destroy()
-            }
-        } catch (e: Exception) {
-            if (!stopRequested) error = e.message ?: "falha ao executar ping"
-        }
-        post { finishPing(error) }
-    }
-
-    private class PingReply(val address: String, val ttl: String, val timeMs: Double, val seq: Int?)
-
-    private fun parseReply(line: String): PingReply? {
-        REPLY_STRICT.find(line)?.let { m ->
-            val time = m.groupValues[5].toDoubleOrNull() ?: return null
-            return PingReply(m.groupValues[2].trim(), m.groupValues[4], time, m.groupValues[3].toIntOrNull())
-        }
-        REPLY_LOOSE.find(line)?.let { m ->
-            val time = m.groupValues[4].toDoubleOrNull() ?: return null
-            return PingReply(m.groupValues[2].trim().removeSuffix(":"), m.groupValues[3], time, null)
-        }
-        return null
-    }
-
-    private fun isHardError(lower: String): Boolean =
-        lower.contains("unknown host") ||
-            lower.contains("cannot resolve") ||
-            lower.contains("network is unreachable") ||
-            lower.contains("operation not permitted") ||
-            lower.contains("name or service not known") ||
-            lower.contains("bad address")
-
-    private fun isErrorLine(line: String): Boolean {
-        val lower = line.lowercase()
-        return isHardError(lower) ||
-            lower.contains("destination host unreachable") ||
-            lower.contains("connect:") ||
-            lower.contains("ping:")
-    }
-
-    private fun handlePingLine(line: String) {
-        val reply = parseReply(line)
-        if (reply == null) {
-            if (isErrorLine(line)) {
-                if (isHardError(line.lowercase())) hardError = true
-                append(line, red)
-            }
-            return
-        }
-
-        val now = System.currentTimeMillis()
-        val seq = reply.seq ?: (lastSeq + 1)
-        lastSeq = max(lastSeq, seq)
-
-        if (!slotAnchored) {
-            slotStart = now - reply.timeMs.toLong() - (seq - 1) * 1000L
-            slotAnchored = true
-        }
-        if (!answered.add(seq)) return // duplicado
-
-        if (seq < nextSeq) stats.lost = max(0, stats.lost - 1) // chegou depois de marcado como perdido
-
-        stats.add(reply.timeMs)
-        chart.addSample(now - reply.timeMs.toLong(), reply.timeMs.toFloat())
-
-        val shown = if (reply.timeMs < 1) "<1" else reply.timeMs.roundToInt().toString()
-        append("Resposta de ${reply.address}: bytes=32 tempo=${shown}ms TTL=${reply.ttl}")
-
-        checkLosses(false)
-        updateStats()
-    }
-
-    /** Marca como perdidos os pacotes cujo prazo venceu (ou todos os pendentes, se [force] e for ping finito). */
-    private fun checkLosses(force: Boolean) {
-        val now = System.currentTimeMillis()
-        val limit = if (sessionContinuous) Int.MAX_VALUE else sessionCount
-        while (nextSeq <= limit) {
-            if (force && sessionContinuous) break
-            val sendTime = slotStart + (nextSeq - 1) * 1000L
-            if (!force && sendTime + LOSS_TIMEOUT_MS > now) break
-            if (nextSeq !in answered) {
-                stats.lost++
-                stats.last = -1.0
-                stats.lastWasLoss = true
-                chart.addLoss(sendTime)
-                append("Esgotado o tempo limite da solicitação.", amber)
-            }
-            nextSeq++
-        }
-    }
-
-    private fun finishPing(error: String?) {
-        handler.removeCallbacks(lossTick)
-        val clean = !stopRequested && error == null && !hardError
-        checkLosses(force = clean)
-
-        if (stats.sent > 0) {
+    private fun printSummary(session: PingSession, error: String?) {
+        val s = session.stats
+        val tag = prefix(session)
+        if (s.sent > 0) {
             append("")
-            append("Estatísticas do Ping para $sessionHost:", white)
-            val s = stats
+            append("${tag}Estatísticas do Ping para ${session.host}:", white)
             append(
                 "    Pacotes: Enviados = ${s.sent}, Recebidos = ${s.received}, " +
                     "Perdidos = ${s.lost} (${s.lossPct.roundToInt()}% de perda),",
@@ -943,25 +1103,301 @@ class MainActivity : Activity() {
                 append("    Nenhuma resposta válida recebida.", amber)
             }
         }
-
         when {
-            stopRequested -> append("Interrompido pelo usuário.", muted)
-            error != null -> append("Erro: $error", red)
-            hardError -> append("Falha ao resolver ou alcançar o destino.", red)
-            else -> append("Concluído.", muted)
+            error != null -> append("${tag}Erro: $error", red)
+            session.hardError -> append("${tag}Falha ao resolver ou alcançar o destino.", red)
+        }
+    }
+
+    private fun completeRun() {
+        handler.removeCallbacks(lossTick)
+        chart.setLive(false)
+        val finishedMode = mode
+
+        if (finishedMode == Mode.DIAG) {
+            evaluateDiagnostic()
+        } else {
+            append(if (stopRequested) "Interrompido pelo usuário." else "Concluído.", muted)
         }
         append("────────────────────────────", muted)
 
-        chart.setLive(false)
-        updateStats()
+        lastRunMode = finishedMode
         setMode(Mode.IDLE)
+        updateStats()
     }
 
     private fun stopRun() {
         if (mode == Mode.IDLE) return
         stopRequested = true
         append("Interrompendo...", muted)
+        sessions.forEach { it.stop() }
         activeProcesses.forEach { it.destroy() }
+    }
+
+    // =====================================================================
+    // Diagnóstico de conexão
+    // =====================================================================
+
+    private fun startDiagnostic() {
+        if (mode != Mode.IDLE) return
+
+        val info = netInfo
+        val targets = ArrayList<Target>()
+        if (usableIp(info.gateway)) targets.add(Target("Gateway", info.gateway, false, DIAG_COUNT, "gw"))
+        if (usableIp(info.dns)) targets.add(Target("DNS", info.dns, false, DIAG_COUNT, "dns"))
+        targets.add(Target("Internet IP", "1.1.1.1", false, DIAG_COUNT, "ip"))
+        targets.add(Target("Internet nome", "www.google.com", false, DIAG_COUNT, "name"))
+        diagRoles = targets.map { it.role }
+        diagLines = emptyList()
+
+        append("")
+        append("────────────────────────────", muted)
+        append("> diagnóstico de conexão", white)
+        append(
+            "Testando " + targets.joinToString(", ") { "${it.label} (${it.host})" } +
+                " — $DIAG_COUNT pacotes cada",
+            muted
+        )
+        if (targets.none { it.role == "gw" }) {
+            append("Gateway indisponível nesta rede (comum em dados móveis).", muted)
+        }
+        append("")
+
+        startSessions(targets, Mode.DIAG)
+    }
+
+    private fun evaluateDiagnostic() {
+        if (stopRequested) {
+            append("Diagnóstico interrompido.", muted)
+            return
+        }
+
+        val byRole = diagRoles.zip(sessions).toMap()
+        val gw = byRole["gw"]
+        val dnsS = byRole["dns"]
+        val ipS = byRole["ip"] ?: return
+        val nameS = byRole["name"] ?: return
+
+        val out = ArrayList<String>()
+        fun emit(text: String, color: Int) {
+            append(text, color)
+            out.add(text)
+        }
+
+        append("")
+        append("RESULTADO", white)
+        for (s in sessions) {
+            val st = s.stats
+            val degraded = st.lossPct >= 10 || st.avg > 150
+            when {
+                st.received == 0 -> emit("✘ ${s.label.padEnd(14)} sem resposta", red)
+                degraded -> emit("▲ ${s.label.padEnd(14)} ${fmt(st.avg)}ms · perda ${st.lossPct.roundToInt()}%", amber)
+                else -> emit("✔ ${s.label.padEnd(14)} ${fmt(st.avg)}ms · perda ${st.lossPct.roundToInt()}%", green)
+            }
+        }
+
+        val problems = ArrayList<String>()
+        val ipOk = ipS.stats.received > 0
+        val nameOk = nameS.stats.received > 0
+
+        if (sessions.all { it.stats.received == 0 }) {
+            problems.add("Nenhum destino respondeu. Verifique se o Wi-Fi ou os dados móveis estão ligados.")
+        } else {
+            if (gw != null) {
+                val g = gw.stats
+                if (g.received == 0) {
+                    problems.add(
+                        if (ipOk) "O gateway não responde ao ping, mas a internet funciona (alguns roteadores bloqueiam ICMP)."
+                        else "Falha na rede local: o roteador não responde. Aproxime-se dele, reconecte ao Wi-Fi ou reinicie o roteador."
+                    )
+                } else if (g.lossPct >= 10 || g.avg > 60) {
+                    problems.add(
+                        "Rede local instável (sinal Wi-Fi fraco ou interferência): gateway com " +
+                            "${g.lossPct.roundToInt()}% de perda e média de ${fmt(g.avg)}ms."
+                    )
+                }
+            }
+
+            if (!ipOk) {
+                if (gw == null || gw.stats.received > 0) {
+                    problems.add("Sem internet: o roteador responde, mas ${ipS.host} não. Provável falha no provedor ou no modem.")
+                }
+            } else {
+                val i = ipS.stats
+                if (i.lossPct >= 10) {
+                    problems.add("Perda de pacotes na internet (${i.lossPct.roundToInt()}%): provedor ou rota instável.")
+                } else if (i.avg > 150) {
+                    problems.add("Latência alta até a internet (média de ${fmt(i.avg)}ms).")
+                }
+                if (i.jitterSamples > 2 && i.jitter > 30) {
+                    problems.add("Jitter alto (${fmt(i.jitter)}ms): ruim para jogos e chamadas de voz/vídeo.")
+                }
+                if (!nameOk) {
+                    var msg = "Problema de DNS: o IP responde, mas ${nameS.host} não resolve. Troque o DNS (ex.: 1.1.1.1 ou 8.8.8.8)."
+                    if (dnsS != null && dnsS.stats.received == 0) {
+                        msg += " O servidor DNS configurado (${dnsS.host}) não responde."
+                    }
+                    problems.add(msg)
+                }
+            }
+        }
+
+        append("")
+        if (problems.isEmpty()) {
+            emit("✔ Conexão saudável: nenhum problema encontrado.", green)
+        } else {
+            emit("Diagnóstico:", white)
+            problems.forEach { emit("• $it", amber) }
+        }
+        diagLines = out
+    }
+
+    // =====================================================================
+    // Compartilhar resultado
+    // =====================================================================
+
+    private fun reportTitle(): String =
+        "Real Ping — " + if (lastRunMode == Mode.DIAG) "diagnóstico de conexão" else "relatório de ping"
+
+    private fun reportDate(): String =
+        SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale("pt", "BR")).format(Date())
+
+    private fun reportBody(): String {
+        val sb = StringBuilder()
+        sb.append("Rede: ${netInfo.type} · IP ${netInfo.ip}\n")
+        sb.append("Gateway ${netInfo.gateway} · DNS ${netInfo.dns}\n")
+        for (s in sessions) {
+            val st = s.stats
+            sb.append('\n')
+            sb.append("▸ ").append(s.label)
+            if (s.label != s.host) sb.append(" (").append(s.host).append(')')
+            sb.append('\n')
+            sb.append("  Enviados ${st.sent} · Recebidos ${st.received} · Perda ${st.lossPct.roundToInt()}%\n")
+            if (st.received > 0) {
+                sb.append(
+                    "  Mín ${fmt(st.min)}ms · Méd ${fmt(st.avg)}ms · Máx ${fmt(st.max)}ms · Jitter ${fmt(st.jitter)}ms\n"
+                )
+            } else {
+                sb.append("  Nenhuma resposta\n")
+            }
+        }
+        if (lastRunMode == Mode.DIAG && diagLines.isNotEmpty()) {
+            sb.append('\n')
+            diagLines.forEach { sb.append(it).append('\n') }
+        }
+        return sb.toString().trimEnd()
+    }
+
+    private fun reportText(): String = "${reportTitle()}\n${reportDate()}\n\n${reportBody()}"
+
+    private fun showShareDialog() {
+        // Traceroute (ou nada executado ainda): compartilha o texto do console.
+        if (sessions.isEmpty() || lastRunMode == Mode.TRACE) {
+            if (buffer.isEmpty()) {
+                Toast.makeText(this, "Nada para enviar ainda", Toast.LENGTH_SHORT).show()
+            } else {
+                shareText(buffer.toString())
+            }
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Enviar resultado")
+            .setItems(arrayOf("Texto (resumo)", "Imagem (gráfico + estatísticas)")) { _, which ->
+                if (which == 0) shareText(reportText()) else shareImage()
+            }
+            .show()
+    }
+
+    private fun shareText(text: String) {
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, text)
+        }
+        startActivity(Intent.createChooser(intent, "Enviar resultado"))
+    }
+
+    private fun shareImage() {
+        try {
+            val dir = File(cacheDir, "shared").apply { mkdirs() }
+            val file = File(dir, "pingreal_relatorio.png")
+            FileOutputStream(file).use { out ->
+                buildReportBitmap().compress(Bitmap.CompressFormat.PNG, 100, out)
+            }
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "image/png"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                clipData = ClipData.newRawUri("", uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(intent, "Enviar resultado"))
+        } catch (e: Exception) {
+            Toast.makeText(this, "Não foi possível gerar a imagem: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun buildReportBitmap(): Bitmap {
+        val width = 1080
+        val pad = 48
+        val inner = width - 2 * pad
+
+        val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = white
+            textSize = 52f
+            typeface = Typeface.DEFAULT_BOLD
+        }
+        val datePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = muted
+            textSize = 30f
+        }
+        val bodyPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = white
+            textSize = 31f
+            typeface = Typeface.MONOSPACE
+        }
+        val body = reportBody()
+        val layout = StaticLayout.Builder.obtain(body, 0, body.length, bodyPaint, inner)
+            .setLineSpacing(8f, 1f)
+            .build()
+
+        val chartW = max(1, chart.width)
+        val chartH = max(1, chart.height)
+        val scale = inner.toFloat() / chartW
+        val scaledChartH = (chartH * scale).toInt()
+
+        var y = pad + 52
+        val titleBaseline = y.toFloat()
+        y += 44
+        val dateBaseline = y.toFloat()
+        y += 36
+        val chartTop = y
+        y += scaledChartH + 36
+        val bodyTop = y
+        val totalH = bodyTop + layout.height + pad
+
+        val bitmap = Bitmap.createBitmap(width, totalH, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(bg)
+        canvas.drawText(reportTitle(), pad.toFloat(), titleBaseline, titlePaint)
+        canvas.drawText(reportDate(), pad.toFloat(), dateBaseline, datePaint)
+
+        val panelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = panel }
+        canvas.drawRoundRect(
+            RectF(pad.toFloat(), chartTop.toFloat(), (pad + inner).toFloat(), (chartTop + scaledChartH).toFloat()),
+            28f, 28f, panelPaint
+        )
+        canvas.save()
+        canvas.translate(pad.toFloat(), chartTop.toFloat())
+        canvas.scale(scale, scale)
+        chart.draw(canvas)
+        canvas.restore()
+
+        canvas.save()
+        canvas.translate(pad.toFloat(), bodyTop.toFloat())
+        layout.draw(canvas)
+        canvas.restore()
+
+        return bitmap
     }
 
     // =====================================================================
@@ -971,13 +1407,14 @@ class MainActivity : Activity() {
     private fun startTraceRoute() {
         if (mode != Mode.IDLE) return
 
-        val host = parseHost(hostInput.text.toString().trim().split(WHITESPACE).firstOrNull().orEmpty())
+        val firstSegment = hostInput.text.toString().split(',').firstOrNull().orEmpty().trim()
+        val host = parseHost(firstSegment.split(WHITESPACE).firstOrNull().orEmpty())
         if (host == null) {
             append("Informe um IP ou hostname válido para o traceroute.", amber)
             return
         }
 
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(PREF_HOST, host).apply()
+        prefs().edit().putString(PREF_HOST, host).apply()
         hideKeyboard()
 
         append("")
@@ -1010,7 +1447,7 @@ class MainActivity : Activity() {
                 if (stopRequested) break
 
                 val hardRaw = probes.firstNotNullOfOrNull { p ->
-                    p.raw?.takeIf { isHardError(it.lowercase()) }
+                    p.raw?.takeIf { PingSession.isHardError(it.lowercase()) }
                 }
                 if (hardRaw != null) {
                     failure = hardRaw
@@ -1024,11 +1461,7 @@ class MainActivity : Activity() {
                 }
                 val where = if (addresses.isEmpty()) "Esgotado o tempo limite" else addresses.joinToString(", ")
                 val hopReached = probes.any { it.reached }
-                val color = when {
-                    hopReached -> green
-                    addresses.isEmpty() -> amber
-                    else -> green
-                }
+                val color = if (addresses.isEmpty()) amber else green
                 val rawNote = if (addresses.isEmpty()) probes.firstNotNullOfOrNull { it.raw } else null
 
                 post {
@@ -1062,6 +1495,7 @@ class MainActivity : Activity() {
                 else -> append("Rastreamento encerrado.", muted)
             }
             append("────────────────────────────", muted)
+            lastRunMode = Mode.TRACE
             setMode(Mode.IDLE)
         }
     }
