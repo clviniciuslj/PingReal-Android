@@ -37,20 +37,7 @@ enum class Status { PENDING, RUNNING, OK, WARN, FAIL, SKIP }
 
 class StepOutcome(val id: String, val title: String, var status: Status, var detail: String)
 
-class Problem(
-    val level: Status,
-    val title: String,
-    val causes: List<String>,
-    val questions: List<String>
-)
-
-class DiagnosticReport(
-    val steps: List<StepOutcome>,
-    val problems: List<Problem>,
-    val cancelled: Boolean
-) {
-    val main: Problem? get() = problems.firstOrNull()
-}
+class DiagnosticReport(val steps: List<StepOutcome>, val cancelled: Boolean)
 
 /** Ping bloqueante de poucos pacotes (usado pelo diagnóstico e pelo teste de velocidade). */
 fun quickPing(host: String, count: Int, procs: MutableList<Process>): PingStats {
@@ -180,15 +167,6 @@ class DiagnosticEngine(private val context: Context) {
         private val INTERNET_TARGETS = listOf("1.1.1.1", "8.8.8.8", "9.9.9.9")
         private const val DNS_NAME = "www.google.com"
         private const val PING_COUNT = 6
-
-        private val FIBER_QUESTIONS = listOf(
-            "Olhe a ONU: a luz LOS está vermelha ou piscando? (vermelha = sem sinal da fibra: cabo dobrado, rompido ou conector sujo)",
-            "A luz PON está acesa fixa? (apagada ou piscando = a ONU não sincronizou com a OLT)",
-            "A luz de internet/WAN está acesa? (apagada com PON fixa = falha de autenticação/PPPoE ou bloqueio na conta)",
-            "O cabo entre a ONU e o roteador está bem encaixado? Teste outro cabo ou outra porta.",
-            "Já reiniciou ONU e roteador (desligados por 30 s)? Se sim e não voltou, abra uma OS.",
-            "Outros clientes da mesma região ou caixa estão sem internet? Se sim, é falha de rede, não do cliente."
-        )
     }
 
     @Volatile var cancelled = false
@@ -214,7 +192,7 @@ class DiagnosticEngine(private val context: Context) {
             update(s)
         }
 
-        fun partial() = DiagnosticReport(steps, emptyList(), true)
+        fun partial() = DiagnosticReport(steps, true)
 
         try {
             set("link", Status.RUNNING, "")
@@ -231,7 +209,7 @@ class DiagnosticEngine(private val context: Context) {
                 for (id in listOf("gw", "inet", "dns", "web", "pub", "route")) {
                     set(id, Status.SKIP, "Não testado: sem conexão local")
                 }
-                return DiagnosticReport(steps, buildProblems(byId, net, null), false)
+                return DiagnosticReport(steps, false)
             }
 
             set("gw", Status.RUNNING, "")
@@ -261,17 +239,14 @@ class DiagnosticEngine(private val context: Context) {
             }
             if (cancelled) return partial()
 
-            var routeDetail: String? = null
             if (internetDown && byId.getValue("gw").status != Status.FAIL) {
                 set("route", Status.RUNNING, "")
-                val r = routeStep()
-                routeDetail = r.second
-                set("route", r.first, r.second)
+                routeStep().let { set("route", it.first, it.second) }
             } else {
                 set("route", Status.SKIP, "Não necessário")
             }
 
-            return DiagnosticReport(steps, buildProblems(byId, net, routeDetail), cancelled)
+            return DiagnosticReport(steps, cancelled)
         } catch (e: Exception) {
             // Cancelar interrompe as threads no meio de uma etapa; isso não é erro.
             if (cancelled) return partial()
@@ -609,154 +584,6 @@ class DiagnosticEngine(private val context: Context) {
                 Status.FAIL to "A rota para no salto $lastAnswered ($lastAddress) · $path"
             else -> Status.FAIL to "Nenhum salto respondeu · $path"
         }
-    }
-
-    // ------------------------------------------------------------------ veredito
-
-    private fun buildProblems(byId: Map<String, StepOutcome>, net: NetInfo, routeDetail: String?): List<Problem> {
-        fun st(id: String) = byId.getValue(id).status
-        fun detail(id: String) = byId.getValue(id).detail
-
-        val problems = ArrayList<Problem>()
-
-        if (st("link") == Status.FAIL) {
-            problems.add(
-                Problem(
-                    Status.FAIL, "Sem conexão com a rede",
-                    listOf(detail("link")),
-                    listOf(
-                        "O Wi-Fi do celular está ligado e conectado à rede da casa?",
-                        "O modo avião está desligado?",
-                        "O roteador está ligado, com as luzes acesas?"
-                    )
-                )
-            )
-            return problems
-        }
-
-        if (st("ip") == Status.FAIL) {
-            problems.add(
-                Problem(
-                    Status.FAIL, "O roteador não entregou endereço IP (DHCP)",
-                    listOf(detail("ip"), "O DHCP do roteador pode estar travado ou desativado."),
-                    listOf(
-                        "Reinicie o roteador: tire da tomada por 30 s e ligue de novo.",
-                        "No celular, esqueça a rede Wi-Fi e conecte novamente.",
-                        "Se persistir, o roteador pode precisar de reset ou troca."
-                    )
-                )
-            )
-            return problems
-        }
-
-        val internetDown = st("inet") == Status.FAIL
-
-        when (st("gw")) {
-            Status.FAIL -> if (internetDown) {
-                problems.add(
-                    Problem(
-                        Status.FAIL, "O roteador não responde",
-                        listOf(
-                            detail("gw"),
-                            "O celular conecta, mas o roteador não responde: pode estar travado, sobrecarregado ou o Wi-Fi está instável."
-                        ),
-                        listOf(
-                            "As luzes do roteador estão acesas? Alguma vermelha?",
-                            "Reinicie o roteador (30 s desligado).",
-                            "Teste perto do roteador, ou por cabo se possível."
-                        )
-                    )
-                )
-            } else {
-                problems.add(
-                    Problem(
-                        Status.WARN, "O roteador não responde a ping, mas a internet funciona",
-                        listOf("Alguns roteadores bloqueiam ping. Não é problema por si só."),
-                        emptyList()
-                    )
-                )
-            }
-            Status.WARN -> problems.add(
-                Problem(
-                    Status.WARN, "Rede local instável (Wi-Fi)",
-                    listOf(detail("gw")),
-                    listOf(
-                        "O cliente está longe do roteador ou há paredes no caminho?",
-                        "Se o aparelho tiver 5 GHz, teste nessa rede (mais rápida, menos interferência).",
-                        "Há muitos aparelhos usando a rede ao mesmo tempo?"
-                    )
-                )
-            )
-            else -> {}
-        }
-
-        if (internetDown && st("gw") != Status.FAIL) {
-            val causes = ArrayList<String>()
-            causes.add("O roteador responde, mas nenhum destino da internet responde.")
-            causes.add("Causas prováveis: fibra ou ONU sem sinal, autenticação (PPPoE) falhando, bloqueio na conta ou falha na rede do provedor.")
-            if (routeDetail != null) causes.add("Rota: $routeDetail")
-            problems.add(Problem(Status.FAIL, "Problema depois do roteador (ONU, fibra ou provedor)", causes, FIBER_QUESTIONS))
-        } else if (st("inet") == Status.WARN) {
-            problems.add(
-                Problem(
-                    Status.WARN, "Internet instável ou lenta",
-                    listOf(detail("inet")),
-                    listOf(
-                        "Teste de novo em outro horário: pode ser congestionamento.",
-                        "Compare com o teste de velocidade para ver a banda real."
-                    )
-                )
-            )
-        }
-
-        if (!internetDown) {
-            when (st("dns")) {
-                Status.FAIL -> problems.add(
-                    Problem(
-                        Status.FAIL, "Problema de DNS",
-                        listOf(detail("dns"), "A internet funciona por IP, mas os nomes não resolvem: os sites não abrem."),
-                        listOf(
-                            "Configure o DNS do roteador (ou do celular) para 1.1.1.1 e 8.8.8.8.",
-                            "Se o DNS do provedor estiver fora, avise o suporte técnico."
-                        )
-                    )
-                )
-                Status.WARN -> problems.add(
-                    Problem(Status.WARN, "DNS lento", listOf(detail("dns")), listOf("Trocar o DNS para 1.1.1.1 ou 8.8.8.8 costuma resolver."))
-                )
-                else -> {}
-            }
-
-            when (st("web")) {
-                Status.FAIL -> problems.add(
-                    Problem(
-                        Status.FAIL, "A navegação falha mesmo com o ping funcionando",
-                        listOf(detail("web")),
-                        listOf(
-                            "A data e a hora do celular estão corretas?",
-                            "Há algum proxy, VPN ou filtro de conteúdo ativo?",
-                            "Alguma página pede login (portal cativo)?"
-                        )
-                    )
-                )
-                Status.WARN -> problems.add(
-                    Problem(Status.WARN, "Navegação parcial", listOf(detail("web")), emptyList())
-                )
-                else -> {}
-            }
-        }
-
-        if (st("link") == Status.WARN) {
-            problems.add(
-                Problem(
-                    Status.WARN, "Atenção na conexão do celular",
-                    listOf(detail("link")),
-                    if (net.type.startsWith("Móvel")) listOf("Conecte o celular ao Wi-Fi do cliente e rode o diagnóstico de novo.") else emptyList()
-                )
-            )
-        }
-
-        return problems.sortedBy { if (it.level == Status.FAIL) 0 else 1 }
     }
 }
 

@@ -52,7 +52,6 @@ class DiagnosticPage(
     private lateinit var speedStart: Button
     private lateinit var speedStop: Button
     private lateinit var shareButton: Button
-    private lateinit var verdictCard: LinearLayout
     private lateinit var speedValue: TextView
     private lateinit var speedPhase: TextView
     private lateinit var speedBar: MeterBar
@@ -67,8 +66,6 @@ class DiagnosticPage(
 
         add(buildDiagnosticCard())
         add(buildStepsCard())
-        verdictCard = ui.card().apply { visibility = View.GONE }
-        add(verdictCard)
         add(buildSpeedCard())
 
         shareButton = ui.button("ENVIAR RELATÓRIO", ui.panel, ui.green, ui.panelStroke) { showShareDialog() }
@@ -247,7 +244,6 @@ class DiagnosticPage(
         diagRunning = true
         refreshButtons()
         resetRows()
-        verdictCard.visibility = View.GONE
         shareButton.visibility = View.GONE
 
         val net = host.netInfo()
@@ -288,44 +284,7 @@ class DiagnosticPage(
         }
 
         lastReport = report
-        showVerdict(report)
         shareButton.visibility = View.VISIBLE
-    }
-
-    private fun showVerdict(report: DiagnosticReport) {
-        verdictCard.removeAllViews()
-        verdictCard.visibility = View.VISIBLE
-        verdictCard.addView(ui.tv("VEREDITO", 11f, ui.cyan, bold = true, spacing = 0.1f).apply { setPadding(0, 0, 0, ui.dp(6)) })
-
-        if (report.problems.isEmpty()) {
-            verdictCard.addView(ui.tv("✔ Conexão saudável", 16f, ui.green, bold = true))
-            verdictCard.addView(
-                ui.tv("Nenhum problema encontrado nas etapas testadas. Se o cliente ainda reclama, rode o teste de velocidade e o ping contínuo na outra aba.", 12f, ui.muted)
-                    .apply { setPadding(0, ui.dp(4), 0, 0) }
-            )
-            return
-        }
-
-        for ((index, problem) in report.problems.withIndex()) {
-            val color = if (problem.level == Status.FAIL) ui.red else ui.amber
-            val glyph = if (problem.level == Status.FAIL) "✘ " else "▲ "
-            verdictCard.addView(
-                ui.tv(glyph + problem.title, if (index == 0) 16f else 14f, color, bold = true)
-                    .apply { setPadding(0, if (index == 0) 0 else ui.dp(14), 0, ui.dp(4)) }
-            )
-            for (cause in problem.causes) {
-                verdictCard.addView(ui.tv("• $cause", 12f, ui.white).apply { setPadding(0, ui.dp(2), 0, ui.dp(2)) })
-            }
-            if (problem.questions.isNotEmpty()) {
-                verdictCard.addView(
-                    ui.tv("PERGUNTE AO CLIENTE", 10f, ui.cyan, bold = true, spacing = 0.1f)
-                        .apply { setPadding(0, ui.dp(10), 0, ui.dp(2)) }
-                )
-                for (q in problem.questions) {
-                    verdictCard.addView(ui.tv("☐ $q", 12f, ui.muted).apply { setPadding(0, ui.dp(3), 0, ui.dp(3)) })
-                }
-            }
-        }
     }
 
     // ------------------------------------------------------------------ velocidade
@@ -437,19 +396,6 @@ class DiagnosticPage(
                 sb.append("${glyph(s.status)} ${s.title}")
                 if (s.detail.isNotBlank()) sb.append(": ${s.detail}")
                 sb.append('\n')
-            }
-            sb.append("\nVEREDITO\n")
-            if (report.problems.isEmpty()) {
-                sb.append("✔ Conexão saudável: nenhum problema encontrado.\n")
-            } else {
-                for (p in report.problems) {
-                    sb.append(if (p.level == Status.FAIL) "✘ " else "▲ ").append(p.title).append('\n')
-                    p.causes.forEach { sb.append("  • ").append(it).append('\n') }
-                    if (p.questions.isNotEmpty()) {
-                        sb.append("  Perguntar ao cliente:\n")
-                        p.questions.forEach { sb.append("  ☐ ").append(it).append('\n') }
-                    }
-                }
             }
         }
 
