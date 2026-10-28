@@ -43,6 +43,7 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -70,32 +71,16 @@ class MainActivity : Activity() {
         val label: String,
         val host: String,
         val continuous: Boolean,
-        val count: Int,
-        val role: String = ""
+        val count: Int
     )
 
     private class RowViews(val cur: TextView, val avg: TextView, val loss: TextView)
-
-    private class Probe(
-        val address: String?,
-        val ms: Double?,
-        val reached: Boolean,
-        val raw: String?
-    )
-
-    private data class NetInfo(
-        val gateway: String,
-        val dns: String,
-        val ip: String,
-        val type: String
-    )
 
     private companion object {
         const val MAX_TARGETS = 4
         const val MAX_HOPS = 30
         const val PROBES_PER_HOP = 3
         const val SILENT_HOPS_LIMIT = 6
-        const val DIAG_COUNT = 8
         const val MAX_CONSOLE_LINES = 600
         const val TRIM_LINES = 100
         const val MAX_HISTORY = 12
@@ -107,16 +92,6 @@ class MainActivity : Activity() {
 
         val HOST_REGEX = Regex("[A-Za-z0-9._:%-]+")
         val WHITESPACE = Regex("\\s+")
-        val TTL_FIELD = Regex("""\bttl[= ]\d+""", RegexOption.IGNORE_CASE)
-        val TIME_FIELD = Regex("""time[=<]\s*([\d.]+)\s*ms""", RegexOption.IGNORE_CASE)
-        val FROM_ADDR = Regex(
-            """\bfrom\s+(?:\S+\s+\()?([0-9a-fA-F:.]+)\)?""",
-            RegexOption.IGNORE_CASE
-        )
-        val EXCEEDED = listOf(
-            "time to live exceeded", "ttl exceeded", "time exceeded",
-            "hop limit", "ttl expired"
-        )
     }
 
     // ---- paleta ----
@@ -135,7 +110,15 @@ class MainActivity : Activity() {
     private val seriesColors = intArrayOf(green, cyan, violet, orange)
 
     // ---- views ----
+    private lateinit var ui: UiKit
+    private lateinit var diagPage: DiagnosticPage
     private lateinit var root: LinearLayout
+    private lateinit var pageTerminal: LinearLayout
+    private lateinit var pageDiag: View
+    private lateinit var nav: LinearLayout
+    private val tabIcons = ArrayList<NavIconView>()
+    private val tabLabels = ArrayList<TextView>()
+
     private lateinit var hostInput: EditText
     private lateinit var favButton: TextView
     private lateinit var chipsScroll: HorizontalScrollView
@@ -143,7 +126,6 @@ class MainActivity : Activity() {
     private lateinit var runButton: Button
     private lateinit var stopButton: Button
     private lateinit var traceButton: Button
-    private lateinit var diagButton: Button
     private lateinit var statusText: TextView
     private lateinit var statusDot: GradientDrawable
     private lateinit var chart: LatencyChartView
@@ -180,14 +162,12 @@ class MainActivity : Activity() {
     private var consoleLines = 0
 
     private var sessions: List<PingSession> = emptyList()
-    private var diagRoles: List<String> = emptyList()
-    private var diagLines: List<String> = emptyList()
     private val emptyStats = PingStats()
     private var netInfo = NetInfo(DASH, DASH, DASH, DASH)
 
     private val lossTick = object : Runnable {
         override fun run() {
-            if (mode != Mode.PING && mode != Mode.DIAG) return
+            if (mode != Mode.PING) return
             sessions.forEach { it.tick() }
             updateStats()
             handler.postDelayed(this, 500)
@@ -231,6 +211,29 @@ class MainActivity : Activity() {
         }
     }
 
+    /** Ponte entre a aba de diagnóstico e a activity (modo ocupado, rede atual, compartilhamento). */
+    private val diagHost = object : DiagnosticPage.Host {
+        override fun acquire(label: String): Boolean {
+            if (mode != Mode.IDLE) return false
+            stopRequested = false
+            setMode(Mode.DIAG, label)
+            return true
+        }
+
+        override fun release() = setMode(Mode.IDLE)
+
+        override fun netInfo(): NetInfo = try {
+            readNetworkInfo()
+        } catch (_: Exception) {
+            this@MainActivity.netInfo
+        }
+
+        override fun post(block: () -> Unit) = this@MainActivity.post(block)
+        override fun shareText(text: String) = this@MainActivity.shareText(text)
+        override fun shareImage(title: String, body: String) =
+            this@MainActivity.shareImage(title, body, withChart = false)
+    }
+
     // =====================================================================
     // Ciclo de vida
     // =====================================================================
@@ -242,10 +245,12 @@ class MainActivity : Activity() {
         window.navigationBarColor = bg
         if (Build.VERSION.SDK_INT >= 30) window.setDecorFitsSystemWindows(false)
 
+        ui = UiKit(this)
         buildUi()
         setContentView(root)
 
         hostInput.setText(prefs().getString(PREF_HOST, "") ?: "")
+        selectTab(0)
         setMode(Mode.IDLE)
         updateStats()
         updateNetworkFooter()
@@ -278,6 +283,7 @@ class MainActivity : Activity() {
         handler.removeCallbacksAndMessages(null)
         sessions.forEach { it.stop() }
         activeProcesses.forEach { it.destroy() }
+        if (::diagPage.isInitialized) diagPage.shutdown()
         executor.shutdownNow()
         sessionPool.shutdownNow()
         probePool.shutdownNow()
@@ -376,19 +382,49 @@ class MainActivity : Activity() {
         return cell to value
     }
 
-    private fun infoCell(label: String): Pair<LinearLayout, TextView> {
-        val value = tv(DASH, 12f, green, mono = true).apply {
+    /** Célula compacta do rodapé: rótulo e valor na mesma linha. */
+    private fun compactCell(label: String): Pair<LinearLayout, TextView> {
+        val value = tv(DASH, 11f, green, mono = true).apply {
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
         }
         val cell = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = roundRect(panel, 12f, panelStroke)
-            setPadding(dp(12), dp(8), dp(10), dp(8))
-            addView(tv(label, 9f, muted, bold = true, spacing = 0.08f))
-            addView(value, lp(-1, -2).apply { topMargin = dp(3) })
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = roundRect(panel, 10f, panelStroke)
+            setPadding(dp(10), dp(6), dp(8), dp(6))
+            addView(tv(label, 9f, muted, bold = true, spacing = 0.06f), lp(dp(34), -2))
+            addView(value, lp(0, -2, 1f))
         }
         return cell to value
+    }
+
+    private fun navItem(index: Int, kind: Int, label: String): LinearLayout {
+        val icon = NavIconView(this, kind)
+        val text = tv(label, 9f, muted, bold = true, spacing = 0.08f).apply { gravity = Gravity.CENTER }
+        tabIcons.add(icon)
+        tabLabels.add(text)
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(0, dp(6), 0, dp(6))
+            background = rippled(Color.TRANSPARENT, 14f)
+            isClickable = true
+            addView(icon, lp(dp(24), dp(24)))
+            addView(text, lp(-2, -2).apply { topMargin = dp(2) })
+            setOnClickListener { selectTab(index) }
+        }
+    }
+
+    private fun selectTab(index: Int) {
+        pageTerminal.visibility = if (index == 0) View.VISIBLE else View.GONE
+        pageDiag.visibility = if (index == 1) View.VISIBLE else View.GONE
+        for (i in tabIcons.indices) {
+            val color = if (i == index) (if (i == 0) green else cyan) else muted
+            tabIcons[i].activeColor = color
+            tabLabels[i].setTextColor(color)
+        }
+        if (index != 0) hideKeyboard()
     }
 
     private fun buildUi() {
@@ -400,6 +436,7 @@ class MainActivity : Activity() {
 
         root.setOnApplyWindowInsetsListener { v, insets ->
             val pad = IntArray(4) // esquerda, topo, direita, base
+            var imeHeight = 0
             if (Build.VERSION.SDK_INT >= 30) {
                 val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
                 val ime = insets.getInsets(WindowInsets.Type.ime())
@@ -407,6 +444,7 @@ class MainActivity : Activity() {
                 pad[1] = bars.top
                 pad[2] = bars.right
                 pad[3] = max(bars.bottom, ime.bottom)
+                imeHeight = ime.bottom
             } else {
                 @Suppress("DEPRECATION")
                 pad[0] = insets.systemWindowInsetLeft
@@ -418,10 +456,12 @@ class MainActivity : Activity() {
                 pad[3] = insets.systemWindowInsetBottom
             }
             v.setPadding(dp(16) + pad[0], dp(8) + pad[1], dp(16) + pad[2], dp(8) + pad[3])
+            // Com o teclado aberto, a barra de abas só atrapalha.
+            if (::nav.isInitialized) nav.visibility = if (imeHeight > dp(120)) View.GONE else View.VISIBLE
             insets
         }
 
-        // ---- título + status ----
+        // ---- título + status (fixo, acima das abas) ----
         val titleRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -441,6 +481,30 @@ class MainActivity : Activity() {
         titleRow.addView(View(this).apply { background = statusDot }, lp(dp(8), dp(8)).apply { marginStart = dp(8) })
         root.addView(titleRow, lp(-1, -2))
 
+        // ---- páginas ----
+        pageTerminal = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        buildTerminalPage(pageTerminal)
+
+        diagPage = DiagnosticPage(this, ui, diagHost)
+        pageDiag = diagPage.view
+
+        val pages = FrameLayout(this)
+        pages.addView(pageTerminal, FrameLayout.LayoutParams(-1, -1))
+        pages.addView(pageDiag, FrameLayout.LayoutParams(-1, -1))
+        root.addView(pages, lp(-1, 0, 1f))
+
+        // ---- barra de abas ----
+        nav = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = roundRect(panel, 18f, panelStroke)
+            setPadding(dp(4), dp(2), dp(4), dp(2))
+        }
+        nav.addView(navItem(0, NavIconView.TERMINAL, "TERMINAL"), lp(0, -2, 1f))
+        nav.addView(navItem(1, NavIconView.DIAGNOSTIC, "DIAGNÓSTICO"), lp(0, -2, 1f))
+        root.addView(nav, lp(-1, -2).apply { topMargin = dp(8) })
+    }
+
+    private fun buildTerminalPage(page: LinearLayout) {
         // ---- entrada + favorito ----
         val inputRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -482,7 +546,7 @@ class MainActivity : Activity() {
         }
         inputRow.addView(hostInput, lp(0, dp(50), 1f))
         inputRow.addView(favButton, lp(dp(50), dp(50)).apply { marginStart = dp(8) })
-        root.addView(inputRow, lp(-1, -2))
+        page.addView(inputRow, lp(-1, -2))
 
         // ---- atalhos (gateway, DNS, favoritos, recentes) ----
         chipsRow = LinearLayout(this).apply {
@@ -494,7 +558,7 @@ class MainActivity : Activity() {
             overScrollMode = View.OVER_SCROLL_NEVER
             addView(chipsRow, ViewGroup.LayoutParams(-2, -2))
         }
-        root.addView(chipsScroll, lp(-1, -2).apply { topMargin = dp(8) })
+        page.addView(chipsScroll, lp(-1, -2).apply { topMargin = dp(8) })
 
         // ---- botões ----
         val buttons = LinearLayout(this).apply {
@@ -503,13 +567,11 @@ class MainActivity : Activity() {
         }
         runButton = actionButton("▶ INICIAR", green, Color.rgb(5, 20, 10)) { startPing() }
         stopButton = actionButton("PARAR", Color.rgb(58, 34, 34), white, Color.rgb(90, 50, 50)) { stopRun() }
-        traceButton = actionButton("TRACE", panel, green, panelStroke) { startTraceRoute() }
-        diagButton = actionButton("DIAG", panel, cyan, panelStroke) { startDiagnostic() }
+        traceButton = actionButton("TRACEROUTE", panel, green, panelStroke) { startTraceRoute() }
         buttons.addView(runButton, lp(0, dp(46), 1.5f))
-        buttons.addView(stopButton, lp(0, dp(46), 1f).apply { marginStart = dp(6) })
-        buttons.addView(traceButton, lp(0, dp(46), 1f).apply { marginStart = dp(6) })
-        buttons.addView(diagButton, lp(0, dp(46), 1f).apply { marginStart = dp(6) })
-        root.addView(buttons, lp(-1, -2))
+        buttons.addView(stopButton, lp(0, dp(46), 1f).apply { marginStart = dp(8) })
+        buttons.addView(traceButton, lp(0, dp(46), 1.3f).apply { marginStart = dp(8) })
+        page.addView(buttons, lp(-1, -2))
 
         // ---- gráfico ----
         val chartCard = card()
@@ -546,7 +608,7 @@ class MainActivity : Activity() {
             visibility = View.GONE
         }
         chartCard.addView(multiBox, lp(-1, -2))
-        root.addView(chartCard, lp(-1, -2))
+        page.addView(chartCard, lp(-1, -2))
 
         // ---- console ----
         val consoleCard = LinearLayout(this).apply {
@@ -573,44 +635,46 @@ class MainActivity : Activity() {
         }
         scroll.addView(output, ViewGroup.LayoutParams(-1, -2))
         consoleCard.addView(scroll, lp(-1, 0, 1f))
-        root.addView(consoleCard, lp(-1, 0, 1f).apply { topMargin = dp(10) })
+        page.addView(consoleCard, lp(-1, 0, 1f).apply { topMargin = dp(10) })
 
-        // ---- rodapé de rede ----
-        val (gwCell, gwV) = infoCell("GATEWAY")
-        val (dnsCell, dnsV) = infoCell("DNS")
-        val (ipCell, ipV) = infoCell("IP LOCAL")
-        val (netCell, netV) = infoCell("REDE")
+        // ---- rodapé de rede (compacto) ----
+        val (gwCell, gwV) = compactCell("GW")
+        val (dnsCell, dnsV) = compactCell("DNS")
+        val (ipCell, ipV) = compactCell("IP")
+        val (netCell, netV) = compactCell("REDE")
         gwValue = gwV; dnsValue = dnsV; ipValue = ipV; netValue = netV
 
         val row1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        row1.addView(gwCell, lp(0, -2, 1f).apply { marginEnd = dp(8) })
+        row1.addView(gwCell, lp(0, -2, 1f).apply { marginEnd = dp(6) })
         row1.addView(dnsCell, lp(0, -2, 1f))
         val row2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        row2.addView(ipCell, lp(0, -2, 1f).apply { marginEnd = dp(8) })
+        row2.addView(ipCell, lp(0, -2, 1f).apply { marginEnd = dp(6) })
         row2.addView(netCell, lp(0, -2, 1f))
-        root.addView(row1, lp(-1, -2).apply { topMargin = dp(10) })
-        root.addView(row2, lp(-1, -2).apply { topMargin = dp(8) })
+        page.addView(row1, lp(-1, -2).apply { topMargin = dp(8) })
+        page.addView(row2, lp(-1, -2).apply { topMargin = dp(6) })
     }
 
-    private fun setMode(newMode: Mode) {
+    private fun setMode(newMode: Mode, label: String? = null) {
         mode = newMode
         val idle = newMode == Mode.IDLE
-        for (b in listOf(runButton, traceButton, diagButton)) {
+        for (b in listOf(runButton, traceButton)) {
             b.isEnabled = idle
             b.alpha = if (idle) 1f else 0.4f
         }
-        stopButton.isEnabled = !idle
-        stopButton.alpha = if (idle) 0.4f else 1f
+        stopButton.isEnabled = newMode == Mode.PING || newMode == Mode.TRACE
+        stopButton.alpha = if (stopButton.isEnabled) 1f else 0.4f
 
-        val (label, color) = when (newMode) {
+        val (text, color) = when (newMode) {
             Mode.IDLE -> "PRONTO" to muted
             Mode.PING -> "PING ATIVO" to green
             Mode.TRACE -> "TRACEROUTE" to amber
-            Mode.DIAG -> "DIAGNÓSTICO" to cyan
+            Mode.DIAG -> (label ?: "DIAGNÓSTICO") to cyan
         }
-        statusText.text = label
+        statusText.text = text
         statusText.setTextColor(color)
         statusDot.setColor(color)
+
+        if (::diagPage.isInitialized) diagPage.onModeChanged(idle)
     }
 
     // =====================================================================
@@ -861,6 +925,7 @@ class MainActivity : Activity() {
     }
 
     private fun hideKeyboard() {
+        if (!::hostInput.isInitialized) return
         val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
         imm.hideSoftInputFromWindow(hostInput.windowToken, 0)
         hostInput.clearFocus()
@@ -1059,10 +1124,10 @@ class MainActivity : Activity() {
         }
         append("")
 
-        startSessions(targets, Mode.PING)
+        startSessions(targets)
     }
 
-    private fun startSessions(targets: List<Target>, newMode: Mode) {
+    private fun startSessions(targets: List<Target>) {
         hideKeyboard()
         stopRequested = false
 
@@ -1076,7 +1141,7 @@ class MainActivity : Activity() {
         chart.setLive(true)
         buildStatsPanel()
         updateStats()
-        setMode(newMode)
+        setMode(Mode.PING)
         handler.postDelayed(lossTick, 500)
 
         sessions.forEach { it.start() }
@@ -1112,22 +1177,16 @@ class MainActivity : Activity() {
     private fun completeRun() {
         handler.removeCallbacks(lossTick)
         chart.setLive(false)
-        val finishedMode = mode
-
-        if (finishedMode == Mode.DIAG) {
-            evaluateDiagnostic()
-        } else {
-            append(if (stopRequested) "Interrompido pelo usuário." else "Concluído.", muted)
-        }
+        append(if (stopRequested) "Interrompido pelo usuário." else "Concluído.", muted)
         append("────────────────────────────", muted)
 
-        lastRunMode = finishedMode
+        lastRunMode = Mode.PING
         setMode(Mode.IDLE)
         updateStats()
     }
 
     private fun stopRun() {
-        if (mode == Mode.IDLE) return
+        if (mode != Mode.PING && mode != Mode.TRACE) return
         stopRequested = true
         append("Interrompendo...", muted)
         sessions.forEach { it.stop() }
@@ -1135,129 +1194,10 @@ class MainActivity : Activity() {
     }
 
     // =====================================================================
-    // Diagnóstico de conexão
-    // =====================================================================
-
-    private fun startDiagnostic() {
-        if (mode != Mode.IDLE) return
-
-        val info = netInfo
-        val targets = ArrayList<Target>()
-        if (usableIp(info.gateway)) targets.add(Target("Gateway", info.gateway, false, DIAG_COUNT, "gw"))
-        if (usableIp(info.dns)) targets.add(Target("DNS", info.dns, false, DIAG_COUNT, "dns"))
-        targets.add(Target("Internet IP", "1.1.1.1", false, DIAG_COUNT, "ip"))
-        targets.add(Target("Internet nome", "www.google.com", false, DIAG_COUNT, "name"))
-        diagRoles = targets.map { it.role }
-        diagLines = emptyList()
-
-        append("")
-        append("────────────────────────────", muted)
-        append("> diagnóstico de conexão", white)
-        append(
-            "Testando " + targets.joinToString(", ") { "${it.label} (${it.host})" } +
-                " — $DIAG_COUNT pacotes cada",
-            muted
-        )
-        if (targets.none { it.role == "gw" }) {
-            append("Gateway indisponível nesta rede (comum em dados móveis).", muted)
-        }
-        append("")
-
-        startSessions(targets, Mode.DIAG)
-    }
-
-    private fun evaluateDiagnostic() {
-        if (stopRequested) {
-            append("Diagnóstico interrompido.", muted)
-            return
-        }
-
-        val byRole = diagRoles.zip(sessions).toMap()
-        val gw = byRole["gw"]
-        val dnsS = byRole["dns"]
-        val ipS = byRole["ip"] ?: return
-        val nameS = byRole["name"] ?: return
-
-        val out = ArrayList<String>()
-        fun emit(text: String, color: Int) {
-            append(text, color)
-            out.add(text)
-        }
-
-        append("")
-        append("RESULTADO", white)
-        for (s in sessions) {
-            val st = s.stats
-            val degraded = st.lossPct >= 10 || st.avg > 150
-            when {
-                st.received == 0 -> emit("✘ ${s.label.padEnd(14)} sem resposta", red)
-                degraded -> emit("▲ ${s.label.padEnd(14)} ${fmt(st.avg)}ms · perda ${st.lossPct.roundToInt()}%", amber)
-                else -> emit("✔ ${s.label.padEnd(14)} ${fmt(st.avg)}ms · perda ${st.lossPct.roundToInt()}%", green)
-            }
-        }
-
-        val problems = ArrayList<String>()
-        val ipOk = ipS.stats.received > 0
-        val nameOk = nameS.stats.received > 0
-
-        if (sessions.all { it.stats.received == 0 }) {
-            problems.add("Nenhum destino respondeu. Verifique se o Wi-Fi ou os dados móveis estão ligados.")
-        } else {
-            if (gw != null) {
-                val g = gw.stats
-                if (g.received == 0) {
-                    problems.add(
-                        if (ipOk) "O gateway não responde ao ping, mas a internet funciona (alguns roteadores bloqueiam ICMP)."
-                        else "Falha na rede local: o roteador não responde. Aproxime-se dele, reconecte ao Wi-Fi ou reinicie o roteador."
-                    )
-                } else if (g.lossPct >= 10 || g.avg > 60) {
-                    problems.add(
-                        "Rede local instável (sinal Wi-Fi fraco ou interferência): gateway com " +
-                            "${g.lossPct.roundToInt()}% de perda e média de ${fmt(g.avg)}ms."
-                    )
-                }
-            }
-
-            if (!ipOk) {
-                if (gw == null || gw.stats.received > 0) {
-                    problems.add("Sem internet: o roteador responde, mas ${ipS.host} não. Provável falha no provedor ou no modem.")
-                }
-            } else {
-                val i = ipS.stats
-                if (i.lossPct >= 10) {
-                    problems.add("Perda de pacotes na internet (${i.lossPct.roundToInt()}%): provedor ou rota instável.")
-                } else if (i.avg > 150) {
-                    problems.add("Latência alta até a internet (média de ${fmt(i.avg)}ms).")
-                }
-                if (i.jitterSamples > 2 && i.jitter > 30) {
-                    problems.add("Jitter alto (${fmt(i.jitter)}ms): ruim para jogos e chamadas de voz/vídeo.")
-                }
-                if (!nameOk) {
-                    var msg = "Problema de DNS: o IP responde, mas ${nameS.host} não resolve. Troque o DNS (ex.: 1.1.1.1 ou 8.8.8.8)."
-                    if (dnsS != null && dnsS.stats.received == 0) {
-                        msg += " O servidor DNS configurado (${dnsS.host}) não responde."
-                    }
-                    problems.add(msg)
-                }
-            }
-        }
-
-        append("")
-        if (problems.isEmpty()) {
-            emit("✔ Conexão saudável: nenhum problema encontrado.", green)
-        } else {
-            emit("Diagnóstico:", white)
-            problems.forEach { emit("• $it", amber) }
-        }
-        diagLines = out
-    }
-
-    // =====================================================================
     // Compartilhar resultado
     // =====================================================================
 
-    private fun reportTitle(): String =
-        "Real Ping — " + if (lastRunMode == Mode.DIAG) "diagnóstico de conexão" else "relatório de ping"
+    private fun reportTitle(): String = "Real Ping — relatório de ping"
 
     private fun reportDate(): String =
         SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale("pt", "BR")).format(Date())
@@ -1281,10 +1221,6 @@ class MainActivity : Activity() {
                 sb.append("  Nenhuma resposta\n")
             }
         }
-        if (lastRunMode == Mode.DIAG && diagLines.isNotEmpty()) {
-            sb.append('\n')
-            diagLines.forEach { sb.append(it).append('\n') }
-        }
         return sb.toString().trimEnd()
     }
 
@@ -1303,7 +1239,7 @@ class MainActivity : Activity() {
         AlertDialog.Builder(this)
             .setTitle("Enviar resultado")
             .setItems(arrayOf("Texto (resumo)", "Imagem (gráfico + estatísticas)")) { _, which ->
-                if (which == 0) shareText(reportText()) else shareImage()
+                if (which == 0) shareText(reportText()) else shareImage(reportTitle(), reportBody(), withChart = true)
             }
             .show()
     }
@@ -1316,12 +1252,12 @@ class MainActivity : Activity() {
         startActivity(Intent.createChooser(intent, "Enviar resultado"))
     }
 
-    private fun shareImage() {
+    private fun shareImage(title: String, body: String, withChart: Boolean) {
         try {
             val dir = File(cacheDir, "shared").apply { mkdirs() }
             val file = File(dir, "pingreal_relatorio.png")
             FileOutputStream(file).use { out ->
-                buildReportBitmap().compress(Bitmap.CompressFormat.PNG, 100, out)
+                buildReportBitmap(title, body, withChart).compress(Bitmap.CompressFormat.PNG, 100, out)
             }
             val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
             val intent = Intent(Intent.ACTION_SEND).apply {
@@ -1336,7 +1272,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun buildReportBitmap(): Bitmap {
+    private fun buildReportBitmap(title: String, body: String, withChart: Boolean): Bitmap {
         val width = 1080
         val pad = 48
         val inner = width - 2 * pad
@@ -1352,10 +1288,9 @@ class MainActivity : Activity() {
         }
         val bodyPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             color = white
-            textSize = 31f
+            textSize = 30f
             typeface = Typeface.MONOSPACE
         }
-        val body = reportBody()
         val layout = StaticLayout.Builder.obtain(body, 0, body.length, bodyPaint, inner)
             .setLineSpacing(8f, 1f)
             .build()
@@ -1363,7 +1298,7 @@ class MainActivity : Activity() {
         val chartW = max(1, chart.width)
         val chartH = max(1, chart.height)
         val scale = inner.toFloat() / chartW
-        val scaledChartH = (chartH * scale).toInt()
+        val scaledChartH = if (withChart) (chartH * scale).toInt() else 0
 
         var y = pad + 52
         val titleBaseline = y.toFloat()
@@ -1371,26 +1306,28 @@ class MainActivity : Activity() {
         val dateBaseline = y.toFloat()
         y += 36
         val chartTop = y
-        y += scaledChartH + 36
+        if (withChart) y += scaledChartH + 36
         val bodyTop = y
         val totalH = bodyTop + layout.height + pad
 
         val bitmap = Bitmap.createBitmap(width, totalH, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         canvas.drawColor(bg)
-        canvas.drawText(reportTitle(), pad.toFloat(), titleBaseline, titlePaint)
+        canvas.drawText(title, pad.toFloat(), titleBaseline, titlePaint)
         canvas.drawText(reportDate(), pad.toFloat(), dateBaseline, datePaint)
 
-        val panelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = panel }
-        canvas.drawRoundRect(
-            RectF(pad.toFloat(), chartTop.toFloat(), (pad + inner).toFloat(), (chartTop + scaledChartH).toFloat()),
-            28f, 28f, panelPaint
-        )
-        canvas.save()
-        canvas.translate(pad.toFloat(), chartTop.toFloat())
-        canvas.scale(scale, scale)
-        chart.draw(canvas)
-        canvas.restore()
+        if (withChart) {
+            val panelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = panel }
+            canvas.drawRoundRect(
+                RectF(pad.toFloat(), chartTop.toFloat(), (pad + inner).toFloat(), (chartTop + scaledChartH).toFloat()),
+                28f, 28f, panelPaint
+            )
+            canvas.save()
+            canvas.translate(pad.toFloat(), chartTop.toFloat())
+            canvas.scale(scale, scale)
+            chart.draw(canvas)
+            canvas.restore()
+        }
 
         canvas.save()
         canvas.translate(pad.toFloat(), bodyTop.toFloat())
@@ -1435,13 +1372,13 @@ class MainActivity : Activity() {
         var gaveUp = false
 
         try {
-            val overhead = calibrateOverhead()
+            val overhead = Tracer.calibrateOverhead(activeProcesses)
 
             for (ttl in 1..MAX_HOPS) {
                 if (stopRequested) break
 
                 val futures = (1..PROBES_PER_HOP).map {
-                    probePool.submit(Callable<Probe> { probe(host, ttl, overhead) })
+                    probePool.submit(Callable<Tracer.Probe> { Tracer.probe(host, ttl, overhead, activeProcesses) })
                 }
                 val probes = futures.map { it.get() }
                 if (stopRequested) break
@@ -1498,72 +1435,5 @@ class MainActivity : Activity() {
             lastRunMode = Mode.TRACE
             setMode(Mode.IDLE)
         }
-    }
-
-    /** Custo fixo de abrir o processo do ping, descontado dos tempos medidos quando o roteador não informa `time=`. */
-    private fun calibrateOverhead(): Double = try {
-        val started = System.nanoTime()
-        val process = ProcessBuilder("/system/bin/ping", "-n", "-c", "1", "-W", "1", "127.0.0.1")
-            .redirectErrorStream(true)
-            .start()
-        activeProcesses.add(process)
-        try {
-            process.inputStream.bufferedReader().use { it.readText() }
-            process.waitFor()
-        } finally {
-            activeProcesses.remove(process)
-            process.destroy()
-        }
-        (System.nanoTime() - started) / 1_000_000.0
-    } catch (_: Exception) {
-        0.0
-    }
-
-    private fun isNoise(line: String): Boolean {
-        val lower = line.lowercase()
-        return lower.startsWith("ping ") ||
-            lower.startsWith("---") ||
-            lower.startsWith("rtt") ||
-            lower.startsWith("round-trip") ||
-            lower.contains("statistics") ||
-            lower.contains("packets transmitted") ||
-            (lower.contains("%") && lower.contains("loss"))
-    }
-
-    private fun extractAddress(line: String): String? =
-        FROM_ADDR.find(line)?.groupValues?.get(1)
-            ?.removeSuffix(":")
-            ?.takeIf { it.contains('.') || it.contains(':') }
-            ?.substringBefore('%')
-
-    private fun probe(host: String, ttl: Int, overheadMs: Double): Probe {
-        val args = listOf("/system/bin/ping", "-n", "-c", "1", "-W", "2", "-t", ttl.toString(), host)
-        val started = System.nanoTime()
-        val process = ProcessBuilder(args).redirectErrorStream(true).start()
-        activeProcesses.add(process)
-        val lines = try {
-            process.inputStream.bufferedReader().use { it.readLines() }
-        } finally {
-            activeProcesses.remove(process)
-            process.destroy()
-        }
-        val elapsedMs = (System.nanoTime() - started) / 1_000_000.0
-
-        val reply = lines.map { it.trim() }.filter { it.isNotEmpty() && !isNoise(it) }
-
-        val destination = reply.firstOrNull {
-            it.contains("bytes from", ignoreCase = true) && TTL_FIELD.containsMatchIn(it)
-        }
-        val exceeded = reply.firstOrNull { l -> EXCEEDED.any { l.contains(it, ignoreCase = true) } }
-        val anyFrom = reply.firstOrNull { FROM_ADDR.containsMatchIn(it) && extractAddress(it) != null }
-
-        val source = destination ?: exceeded ?: anyFrom
-        val address = source?.let { extractAddress(it) }
-
-        if (address == null) return Probe(null, null, false, reply.firstOrNull())
-
-        val reportedTime = source?.let { TIME_FIELD.find(it)?.groupValues?.get(1)?.toDoubleOrNull() }
-        val ms = reportedTime ?: (elapsedMs - overheadMs).coerceAtLeast(0.5)
-        return Probe(address, ms, destination != null, null)
     }
 }
