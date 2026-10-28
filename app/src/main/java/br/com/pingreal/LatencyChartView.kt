@@ -29,20 +29,26 @@ import kotlin.math.sqrt
  */
 class LatencyChartView(context: Context) : View(context) {
 
+    /** [v] é o valor real; [dv] é o valor desenhado (difere de [v] só enquanto a amostra "desliza" até o lugar). */
     private class Sample(val t: Long, val v: Float) {
+        var dv: Float = v
         val lost: Boolean get() = v < 0f
     }
 
     private class Series(val color: Int) {
         val samples = ArrayList<Sample>()
         var tangents = FloatArray(64)
+        var easing: Sample? = null
+        var easeFrom = 0f
+        var easeStart = 0L
     }
 
     companion object {
-        // Atraso entre o relógio e a ponta direita. Precisa cobrir só o RTT da resposta;
-        // valores maiores deixam o gráfico visivelmente atrás do console.
-        private const val DELAY_MS = 600L
+        // Sem atraso: a ponta direita é "agora". Entre uma resposta e outra a curva é estendida
+        // até lá (veja onDraw), então a linha anda continuamente sem ficar atrás do console.
+        private const val DELAY_MS = 0L
         private const val HEAD_GRACE_MS = 2500L
+        private const val EASE_MS = 380f
         private const val WINDOW_MS = 60_000L
 
         private val GOOD = Color.rgb(74, 222, 128)
@@ -131,10 +137,20 @@ class LatencyChartView(context: Context) : View(context) {
     fun addLoss(index: Int, timeMs: Long) = insert(index, Sample(timeMs, -1f))
 
     private fun insert(index: Int, sample: Sample) {
-        val list = series.getOrNull(index)?.samples ?: return
+        val s = series.getOrNull(index) ?: return
+        val list = s.samples
         var i = list.size
         while (i > 0 && list[i - 1].t > sample.t) i--
         list.add(i, sample)
+
+        // Amostra nova no fim: o valor desliza do anterior até o real em vez de saltar.
+        if (!sample.lost && i == list.size - 1) {
+            val previous = list.getOrNull(i - 1)?.takeIf { !it.lost }
+            s.easing = sample
+            s.easeFrom = previous?.dv ?: sample.v
+            s.easeStart = System.currentTimeMillis()
+            sample.dv = s.easeFrom
+        }
 
         val cutoff = System.currentTimeMillis() - WINDOW_MS * 2
         while (list.size > 2 && list[0].t < cutoff) list.removeAt(0)
@@ -225,6 +241,23 @@ class LatencyChartView(context: Context) : View(context) {
         for ((index, s) in series.withIndex()) {
             val list = s.samples
 
+            // Deslize da amostra mais recente até o valor real.
+            val easing = s.easing
+            if (easing != null) {
+                val p = ((now - s.easeStart) / EASE_MS).coerceIn(0f, 1f)
+                val smooth = p * p * (3f - 2f * p)
+                easing.dv = s.easeFrom + (easing.v - s.easeFrom) * smooth
+                if (p >= 1f) s.easing = null else animating = true
+            }
+
+            // Estende a curva até "agora" com um ponto virtual: a linha continua andando entre respostas.
+            var virtual: Sample? = null
+            val tail = list.lastOrNull()
+            if (live && tail != null && !tail.lost && displayT > tail.t && displayT - tail.t <= HEAD_GRACE_MS) {
+                virtual = Sample(displayT, tail.dv)
+                list.add(virtual)
+            }
+
             // Perdas
             val lossColor = if (single) BAD else s.color
             lossPaint.color = Color.argb(70, Color.red(lossColor), Color.green(lossColor), Color.blue(lossColor))
@@ -250,6 +283,8 @@ class LatencyChartView(context: Context) : View(context) {
                 }
                 i = j + 1
             }
+
+            if (virtual != null) list.removeAt(list.size - 1)
         }
 
         // Ponto na ponta (valor atual de cada série)
@@ -291,9 +326,9 @@ class LatencyChartView(context: Context) : View(context) {
         if (t1 < winStart || t0 > displayT) return Float.NaN
 
         if (from == to) {
-            dotPaint.color = if (single) colorFor(list[from].v.toDouble()) else s.color
-            canvas.drawCircle(xOf(t0), yOf(list[from].v), dp(3f), dotPaint)
-            return headOf(list[from].v, t0, xOf)
+            dotPaint.color = if (single) colorFor(list[from].dv.toDouble()) else s.color
+            canvas.drawCircle(xOf(t0), yOf(list[from].dv), dp(3f), dotPaint)
+            return headOf(list[from].dv, t0, xOf)
         }
 
         computeTangents(s, from, to)
@@ -343,7 +378,7 @@ class LatencyChartView(context: Context) : View(context) {
             runHeadX = xRight
             v
         } else {
-            headOf(list[to].v, t1, xOf)
+            headOf(list[to].dv, t1, xOf)
         }
     }
 
@@ -365,7 +400,7 @@ class LatencyChartView(context: Context) : View(context) {
         val d = FloatArray(to - from)
         for (i in from until to) {
             val h = max(1f, (list[i + 1].t - list[i].t).toFloat())
-            d[i - from] = (list[i + 1].v - list[i].v) / h
+            d[i - from] = (list[i + 1].dv - list[i].dv) / h
         }
         m[from] = d[0]
         m[to] = d[to - from - 1]
@@ -399,9 +434,9 @@ class LatencyChartView(context: Context) : View(context) {
         val u = ((t - a.t) / h).coerceIn(0f, 1f)
         val u2 = u * u
         val u3 = u2 * u
-        return (2 * u3 - 3 * u2 + 1) * a.v +
+        return (2 * u3 - 3 * u2 + 1) * a.dv +
             (u3 - 2 * u2 + u) * h * s.tangents[k] +
-            (-2 * u3 + 3 * u2) * b.v +
+            (-2 * u3 + 3 * u2) * b.dv +
             (u3 - u2) * h * s.tangents[k + 1]
     }
 
