@@ -51,9 +51,9 @@ class LatencyChartView(context: Context) : View(context) {
         private const val EASE_MS = 380f
         private const val WINDOW_MS = 60_000L
 
-        private val GOOD = Color.rgb(74, 222, 128)
-        private val WARN = Color.rgb(251, 191, 36)
-        private val BAD = Color.rgb(248, 113, 113)
+        private val GOOD = Color.rgb(111, 207, 151)
+        private val WARN = Color.rgb(229, 180, 84)
+        private val BAD = Color.rgb(229, 115, 115)
 
         private val SCALE_STEPS = floatArrayOf(
             20f, 30f, 50f, 80f, 100f, 150f, 200f, 300f, 500f, 800f, 1000f, 2000f, 5000f
@@ -82,16 +82,16 @@ class LatencyChartView(context: Context) : View(context) {
     private val fillPath = Path()
 
     private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(22, 255, 255, 255)
+        color = Color.argb(16, 255, 255, 255)
         strokeWidth = dp(1f)
         style = Paint.Style.STROKE
     }
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(120, 200, 215, 205)
+        color = Color.argb(105, 200, 205, 210)
         textSize = dp(9f)
     }
     private val emptyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(140, 200, 215, 205)
+        color = Color.argb(120, 200, 205, 210)
         textSize = dp(12f)
         textAlign = Paint.Align.CENTER
     }
@@ -161,7 +161,7 @@ class LatencyChartView(context: Context) : View(context) {
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         fillPaint.shader = LinearGradient(
             0f, dp(10f), 0f, h - dp(12f),
-            Color.argb(105, 74, 222, 128), Color.argb(0, 74, 222, 128),
+            Color.argb(40, 111, 207, 151), Color.argb(0, 111, 207, 151),
             Shader.TileMode.CLAMP
         )
     }
@@ -260,7 +260,7 @@ class LatencyChartView(context: Context) : View(context) {
 
             // Perdas
             val lossColor = if (single) BAD else s.color
-            lossPaint.color = Color.argb(70, Color.red(lossColor), Color.green(lossColor), Color.blue(lossColor))
+            lossPaint.color = Color.argb(50, Color.red(lossColor), Color.green(lossColor), Color.blue(lossColor))
             lossDotPaint.color = lossColor
             for (sample in list) {
                 if (!sample.lost || sample.t < winStart || sample.t > displayT) continue
@@ -293,15 +293,8 @@ class LatencyChartView(context: Context) : View(context) {
             val x = headXs[index]
             val y = yOf(headValue)
             val color = if (single) colorFor(headValue.toDouble()) else series[index].color
-            if (live) {
-                val phase = (now % 1400L) / 1400f
-                haloPaint.color = Color.argb(((1f - phase) * 90).toInt(), Color.red(color), Color.green(color), Color.blue(color))
-                canvas.drawCircle(x, y, dp(5f) + dp(7f) * phase, haloPaint)
-            }
             dotPaint.color = color
-            canvas.drawCircle(x, y, dp(4f), dotPaint)
-            dotPaint.color = Color.argb(255, 8, 12, 10)
-            canvas.drawCircle(x, y, dp(1.8f), dotPaint)
+            canvas.drawCircle(x, y, dp(3.2f), dotPaint)
         }
 
         if (live || animating) postInvalidateOnAnimation()
@@ -370,8 +363,7 @@ class LatencyChartView(context: Context) : View(context) {
         glowPaint.color = Color.argb(38, Color.red(s.color), Color.green(s.color), Color.blue(s.color))
         glowPaint.strokeWidth = if (single) dp(7f) else dp(5f)
         linePaint.color = s.color
-        linePaint.strokeWidth = if (single) dp(2.4f) else dp(2f)
-        canvas.drawPath(path, glowPaint)
+        linePaint.strokeWidth = if (single) dp(1.8f) else dp(1.6f)
         canvas.drawPath(path, linePaint)
 
         return if (t0 <= displayT && t1 >= displayT) {

@@ -68,7 +68,7 @@ class DiagnosticPage(
         add(buildStepsCard())
         add(buildSpeedCard())
 
-        shareButton = ui.button("ENVIAR RELATÓRIO", ui.panel, ui.green, ui.panelStroke) { showShareDialog() }
+        shareButton = ui.button("ENVIAR RELATÓRIO", android.graphics.Color.TRANSPARENT, ui.white, ui.panelStroke) { showShareDialog() }
         shareButton.visibility = View.GONE
         content.addView(shareButton, ui.lp(-1, ui.dp(46)).apply { bottomMargin = ui.dp(12) })
 
@@ -83,10 +83,10 @@ class DiagnosticPage(
 
     private fun buildDiagnosticCard(): View {
         val card = ui.card()
-        card.addView(ui.tv("DIAGNÓSTICO COMPLETO", 11f, ui.cyan, bold = true, spacing = 0.1f))
+        card.addView(ui.tv("DIAGNÓSTICO COMPLETO", 11f, ui.muted, bold = true, spacing = 0.1f))
         val buttons = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
-        diagStart = ui.button("▶ INICIAR DIAGNÓSTICO", ui.green, android.graphics.Color.rgb(5, 20, 10)) { startDiagnostic() }
-        diagStop = ui.button("PARAR", android.graphics.Color.rgb(58, 34, 34), ui.white, android.graphics.Color.rgb(90, 50, 50)) { stopDiagnostic() }
+        diagStart = ui.button("▶ INICIAR DIAGNÓSTICO", ui.green, android.graphics.Color.rgb(8, 20, 14)) { startDiagnostic() }
+        diagStop = ui.button("PARAR", android.graphics.Color.TRANSPARENT, ui.red, ui.panelStroke) { stopDiagnostic() }
         buttons.addView(diagStart, ui.lp(0, ui.dp(46), 2f))
         buttons.addView(diagStop, ui.lp(0, ui.dp(46), 1f).apply { marginStart = ui.dp(8) })
         card.addView(buttons, ui.lp(-1, -2).apply { topMargin = ui.dp(10) })
@@ -95,7 +95,7 @@ class DiagnosticPage(
 
     private fun buildStepsCard(): View {
         val card = ui.card()
-        card.addView(ui.tv("ETAPAS", 11f, ui.green, bold = true, spacing = 0.1f).apply { setPadding(0, 0, 0, ui.dp(6)) })
+        card.addView(ui.tv("ETAPAS", 11f, ui.muted, bold = true, spacing = 0.1f).apply { setPadding(0, 0, 0, ui.dp(6)) })
         for ((id, title) in DiagnosticEngine.STEP_TITLES) {
             val glyph = ui.tv("○", 16f, ui.muted, bold = true).apply { gravity = Gravity.CENTER_HORIZONTAL }
             val titleView = ui.tv(title, 13f, ui.white, bold = true)
@@ -119,7 +119,7 @@ class DiagnosticPage(
 
     private fun buildSpeedCard(): View {
         val card = ui.card()
-        card.addView(ui.tv("TESTE DE VELOCIDADE", 11f, ui.green, bold = true, spacing = 0.1f))
+        card.addView(ui.tv("TESTE DE VELOCIDADE", 11f, ui.muted, bold = true, spacing = 0.1f))
 
         val valueRow = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -129,7 +129,7 @@ class DiagnosticPage(
         valueRow.addView(speedValue)
         valueRow.addView(ui.tv(" Mbps", 13f, ui.muted).apply { setPadding(0, 0, 0, ui.dp(6)) })
         valueRow.addView(View(activity), ui.lp(0, 1, 1f))
-        speedPhase = ui.tv("", 11f, ui.cyan, bold = true, spacing = 0.08f).apply { setPadding(0, 0, 0, ui.dp(8)) }
+        speedPhase = ui.tv("", 11f, ui.muted, bold = true, spacing = 0.08f).apply { setPadding(0, 0, 0, ui.dp(8)) }
         valueRow.addView(speedPhase)
         card.addView(valueRow, ui.lp(-1, -2).apply { topMargin = ui.dp(10) })
 
@@ -154,8 +154,8 @@ class DiagnosticPage(
         card.addView(results, ui.lp(-1, -2))
 
         val buttons = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
-        speedStart = ui.button("▶ TESTAR VELOCIDADE", ui.panel, ui.green, ui.panelStroke) { confirmSpeed() }
-        speedStop = ui.button("PARAR", android.graphics.Color.rgb(58, 34, 34), ui.white, android.graphics.Color.rgb(90, 50, 50)) { stopSpeed() }
+        speedStart = ui.button("▶ TESTAR VELOCIDADE", android.graphics.Color.TRANSPARENT, ui.white, ui.panelStroke) { confirmSpeed() }
+        speedStop = ui.button("PARAR", android.graphics.Color.TRANSPARENT, ui.red, ui.panelStroke) { stopSpeed() }
         buttons.addView(speedStart, ui.lp(0, ui.dp(46), 2f))
         buttons.addView(speedStop, ui.lp(0, ui.dp(46), 1f).apply { marginStart = ui.dp(8) })
         card.addView(buttons, ui.lp(-1, -2).apply { topMargin = ui.dp(14) })
@@ -200,7 +200,7 @@ class DiagnosticPage(
 
     private fun colorOf(s: Status) = when (s) {
         Status.PENDING, Status.SKIP -> ui.muted
-        Status.RUNNING -> ui.cyan
+        Status.RUNNING -> ui.white
         Status.OK -> ui.green
         Status.WARN -> ui.amber
         Status.FAIL -> ui.red
@@ -217,7 +217,7 @@ class DiagnosticPage(
             when (step.status) {
                 Status.WARN -> ui.amber
                 Status.FAIL -> ui.red
-                Status.RUNNING -> ui.cyan
+                Status.RUNNING -> ui.muted
                 else -> ui.muted
             }
         )

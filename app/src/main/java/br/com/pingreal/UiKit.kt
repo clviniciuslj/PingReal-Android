@@ -20,15 +20,15 @@ import kotlin.math.max
 /** Paleta e construtores de view usados pelas telas montadas em código. */
 class UiKit(private val context: Context) {
 
-    val bg = Color.rgb(8, 12, 10)
-    val panel = Color.rgb(17, 25, 20)
-    val panelStroke = Color.rgb(30, 43, 35)
-    val green = Color.rgb(74, 222, 128)
-    val cyan = Color.rgb(56, 189, 248)
-    val amber = Color.rgb(251, 191, 36)
-    val red = Color.rgb(248, 113, 113)
-    val white = Color.rgb(232, 238, 233)
-    val muted = Color.rgb(125, 143, 132)
+    val bg = Color.rgb(11, 11, 12)
+    val panel = Color.rgb(18, 19, 21)
+    val panelStroke = Color.rgb(36, 38, 41)
+    val green = Color.rgb(111, 207, 151)
+    val cyan = Color.rgb(108, 180, 238)
+    val amber = Color.rgb(229, 180, 84)
+    val red = Color.rgb(229, 115, 115)
+    val white = Color.rgb(230, 232, 234)
+    val muted = Color.rgb(138, 143, 148)
 
     private val density = context.resources.displayMetrics.density
 
@@ -78,7 +78,7 @@ class UiKit(private val context: Context) {
 
     fun card(): LinearLayout = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
-        background = roundRect(panel, 16f, panelStroke)
+        background = roundRect(panel, 10f, panelStroke)
         setPadding(dp(14), dp(12), dp(14), dp(12))
     }
 
@@ -89,7 +89,7 @@ class UiKit(private val context: Context) {
             textSize = 12f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(textColor)
-            background = rippled(fill, 12f, stroke)
+            background = rippled(fill, 8f, stroke)
             stateListAnimator = null
             minWidth = 0
             minHeight = 0
@@ -114,7 +114,7 @@ class NavIconView(context: Context, private val kind: Int) : View(context) {
     private val density = resources.displayMetrics.density
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = 2f * density
+        strokeWidth = 1.6f * density
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
@@ -158,7 +158,7 @@ class MeterBar(context: Context) : View(context) {
 
     var fraction: Float = 0f
         set(value) { field = value.coerceIn(0f, 1f); invalidate() }
-    var fillColor: Int = Color.rgb(74, 222, 128)
+    var fillColor: Int = Color.rgb(111, 207, 151)
         set(value) { field = value; invalidate() }
 
     private val density = resources.displayMetrics.density

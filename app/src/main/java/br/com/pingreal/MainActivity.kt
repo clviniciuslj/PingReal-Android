@@ -95,18 +95,19 @@ class MainActivity : Activity() {
     }
 
     // ---- paleta ----
-    private val bg = Color.rgb(8, 12, 10)
-    private val panel = Color.rgb(17, 25, 20)
-    private val panelStroke = Color.rgb(30, 43, 35)
-    private val green = Color.rgb(74, 222, 128)
-    private val cyan = Color.rgb(56, 189, 248)
-    private val violet = Color.rgb(192, 132, 252)
-    private val orange = Color.rgb(251, 146, 60)
-    private val amber = Color.rgb(251, 191, 36)
-    private val red = Color.rgb(248, 113, 113)
-    private val white = Color.rgb(232, 238, 233)
-    private val muted = Color.rgb(125, 143, 132)
-    private val consoleBg = Color.rgb(5, 9, 7)
+    private val bg = Color.rgb(11, 11, 12)
+    private val panel = Color.rgb(18, 19, 21)
+    private val panelStroke = Color.rgb(36, 38, 41)
+    private val green = Color.rgb(111, 207, 151)
+    private val cyan = Color.rgb(108, 180, 238)
+    private val violet = Color.rgb(183, 156, 237)
+    private val orange = Color.rgb(232, 162, 99)
+    private val amber = Color.rgb(229, 180, 84)
+    private val red = Color.rgb(229, 115, 115)
+    private val white = Color.rgb(230, 232, 234)
+    private val text = Color.rgb(190, 194, 198)
+    private val muted = Color.rgb(138, 143, 148)
+    private val consoleBg = Color.rgb(8, 9, 10)
     private val seriesColors = intArrayOf(green, cyan, violet, orange)
 
     // ---- views ----
@@ -194,7 +195,7 @@ class MainActivity : Activity() {
             val shown = if (reply.timeMs < 1) "<1" else reply.timeMs.roundToInt().toString()
             append(
                 "${prefix(session)}Resposta de ${reply.address}: bytes=32 tempo=${shown}ms TTL=${reply.ttl}",
-                if (sessions.size > 1) session.color else green
+                if (sessions.size > 1) session.color else text
             )
             updateStats()
         }
@@ -368,7 +369,7 @@ class MainActivity : Activity() {
 
     private fun card(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        background = roundRect(panel, 16f, panelStroke)
+        background = roundRect(panel, 10f, panelStroke)
         setPadding(dp(14), dp(12), dp(14), dp(12))
     }
 
@@ -379,7 +380,7 @@ class MainActivity : Activity() {
             textSize = 12f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(textColor)
-            background = rippled(fill, 12f, stroke)
+            background = rippled(fill, 8f, stroke)
             stateListAnimator = null
             minWidth = 0
             minHeight = 0
@@ -390,10 +391,10 @@ class MainActivity : Activity() {
         }
 
     private fun textAction(label: String, onClick: () -> Unit) =
-        tv(label, 11f, green, bold = true, spacing = 0.08f).apply {
+        tv(label, 11f, muted, bold = true, spacing = 0.08f).apply {
             gravity = Gravity.CENTER
             setPadding(dp(10), dp(6), dp(10), dp(6))
-            background = rippled(Color.TRANSPARENT, 8f)
+            background = rippled(Color.TRANSPARENT, 6f)
             isClickable = true
             setOnClickListener { onClick() }
         }
@@ -410,14 +411,14 @@ class MainActivity : Activity() {
 
     /** Célula compacta do rodapé: rótulo e valor na mesma linha. */
     private fun compactCell(label: String): Pair<LinearLayout, TextView> {
-        val value = tv(DASH, 11f, green, mono = true).apply {
+        val value = tv(DASH, 11f, text, mono = true).apply {
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
         }
         val cell = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = roundRect(panel, 10f, panelStroke)
+            background = roundRect(panel, 8f, panelStroke)
             setPadding(dp(10), dp(6), dp(8), dp(6))
             addView(tv(label, 9f, muted, bold = true, spacing = 0.06f), lp(dp(34), -2))
             addView(value, lp(0, -2, 1f))
@@ -434,7 +435,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             setPadding(0, dp(6), 0, dp(6))
-            background = rippled(Color.TRANSPARENT, 14f)
+            background = rippled(Color.TRANSPARENT, 8f)
             isClickable = true
             addView(icon, lp(dp(24), dp(24)))
             addView(text, lp(-2, -2).apply { topMargin = dp(2) })
@@ -446,7 +447,7 @@ class MainActivity : Activity() {
         pageTerminal.visibility = if (index == 0) View.VISIBLE else View.GONE
         pageDiag.visibility = if (index == 1) View.VISIBLE else View.GONE
         for (i in tabIcons.indices) {
-            val color = if (i == index) (if (i == 0) green else cyan) else muted
+            val color = if (i == index) white else muted
             tabIcons[i].activeColor = color
             tabLabels[i].setTextColor(color)
         }
@@ -493,9 +494,8 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(2), dp(4), dp(2), dp(10))
         }
-        titleRow.addView(tv("⌁", 22f, green, bold = true))
         titleRow.addView(
-            tv("REAL PING", 17f, white, bold = true, spacing = 0.14f).apply { setPadding(dp(8), 0, 0, 0) },
+            tv("REAL PING", 15f, white, bold = true, spacing = 0.18f),
             lp(0, -2, 1f)
         )
         statusText = tv("PRONTO", 10f, muted, bold = true, spacing = 0.1f)
@@ -522,12 +522,13 @@ class MainActivity : Activity() {
         // ---- barra de abas ----
         nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            background = roundRect(panel, 18f, panelStroke)
+            background = roundRect(bg, 0f)
             setPadding(dp(4), dp(2), dp(4), dp(2))
         }
         nav.addView(navItem(0, NavIconView.TERMINAL, "TERMINAL"), lp(0, -2, 1f))
         nav.addView(navItem(1, NavIconView.DIAGNOSTIC, "DIAGNÓSTICO"), lp(0, -2, 1f))
-        root.addView(nav, lp(-1, -2).apply { topMargin = dp(8) })
+        root.addView(View(this).apply { setBackgroundColor(panelStroke) }, lp(-1, dp(1)).apply { topMargin = dp(8) })
+        root.addView(nav, lp(-1, -2).apply { topMargin = dp(2) })
     }
 
     private fun buildTerminalPage(page: LinearLayout) {
@@ -543,7 +544,7 @@ class MainActivity : Activity() {
             setHintTextColor(muted)
             hint = "IP ou host  (vários: 8.8.8.8, 1.1.1.1)"
             typeface = Typeface.MONOSPACE
-            background = roundRect(panel, 12f, panelStroke)
+            background = roundRect(panel, 8f, panelStroke)
             setPadding(dp(14), 0, dp(14), 0)
             inputType = InputType.TYPE_CLASS_TEXT or
                 InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
@@ -565,7 +566,7 @@ class MainActivity : Activity() {
         }
         favButton = tv("☆", 22f, muted).apply {
             gravity = Gravity.CENTER
-            background = rippled(panel, 12f, panelStroke)
+            background = rippled(panel, 8f, panelStroke)
             isClickable = true
             contentDescription = "Favoritar"
             setOnClickListener { toggleFavorite() }
@@ -592,8 +593,8 @@ class MainActivity : Activity() {
             setPadding(0, dp(10), 0, dp(10))
         }
         runButton = actionButton("▶ INICIAR", green, Color.rgb(5, 20, 10)) { startPing() }
-        stopButton = actionButton("PARAR", Color.rgb(58, 34, 34), white, Color.rgb(90, 50, 50)) { stopRun() }
-        traceButton = actionButton("TRACEROUTE", panel, green, panelStroke) { startTraceRoute() }
+        stopButton = actionButton("PARAR", Color.TRANSPARENT, red, panelStroke) { stopRun() }
+        traceButton = actionButton("TRACEROUTE", Color.TRANSPARENT, white, panelStroke) { startTraceRoute() }
         // Toque longo: mostra a linha crua que o ping devolveu em cada salto (para depurar o formato).
         traceButton.setOnLongClickListener {
             traceDebug = !traceDebug
@@ -618,7 +619,7 @@ class MainActivity : Activity() {
         chartSubtitle = tv("últimos 60 s", 10f, muted).apply { setPadding(0, dp(1), 0, 0) }
         val chartTitle = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            addView(tv("LATÊNCIA", 11f, green, bold = true, spacing = 0.1f))
+            addView(tv("LATÊNCIA", 11f, muted, bold = true, spacing = 0.1f))
             addView(chartSubtitle)
         }
         latencyNow = tv("— ms", 24f, white, bold = true, mono = true)
@@ -649,7 +650,7 @@ class MainActivity : Activity() {
         // ---- console ----
         val consoleCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = roundRect(consoleBg, 16f, panelStroke)
+            background = roundRect(consoleBg, 10f, panelStroke)
             setPadding(dp(4), dp(4), dp(4), dp(8))
         }
         val consoleHeader = LinearLayout(this).apply {
@@ -657,14 +658,14 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(10), 0, 0, 0)
         }
-        consoleHeader.addView(tv("CONSOLE", 11f, green, bold = true, spacing = 0.1f), lp(0, -2, 1f))
+        consoleHeader.addView(tv("CONSOLE", 11f, muted, bold = true, spacing = 0.1f), lp(0, -2, 1f))
         consoleHeader.addView(textAction("ENVIAR") { showShareDialog() })
         consoleHeader.addView(textAction("COPIAR") { copyConsole() })
         consoleHeader.addView(textAction("LIMPAR") { if (mode == Mode.IDLE) clearConsole() })
         consoleCard.addView(consoleHeader, lp(-1, -2))
 
         scroll = ScrollView(this).apply { isFillViewport = true }
-        output = tv("", 12f, green, mono = true).apply {
+        output = tv("", 12f, text, mono = true).apply {
             setPadding(dp(10), dp(4), dp(10), dp(4))
             setTextIsSelectable(true)
             setLineSpacing(dpf(2f), 1f)
@@ -704,7 +705,7 @@ class MainActivity : Activity() {
             Mode.IDLE -> "PRONTO" to muted
             Mode.PING -> "PING ATIVO" to green
             Mode.TRACE -> "TRACEROUTE" to amber
-            Mode.DIAG -> (label ?: "DIAGNÓSTICO") to cyan
+            Mode.DIAG -> (label ?: "DIAGNÓSTICO") to white
         }
         statusText.text = text
         statusText.setTextColor(color)
@@ -866,7 +867,7 @@ class MainActivity : Activity() {
         tv(label, 11f, color, mono = true).apply {
             maxLines = 1
             setPadding(dp(11), dp(6), dp(11), dp(6))
-            background = rippled(panel, 14f, panelStroke)
+            background = rippled(panel, 8f, panelStroke)
             isClickable = true
             setOnClickListener { onClick() }
             if (onLongClick != null) setOnLongClickListener { onLongClick(); true }
@@ -881,8 +882,8 @@ class MainActivity : Activity() {
             hostInput.setSelection(entry.length)
         }
 
-        if (usableIp(netInfo.gateway)) add(chip("⌂ Gateway", cyan, { addTarget(netInfo.gateway) }))
-        if (usableIp(netInfo.dns)) add(chip("DNS", cyan, { addTarget(netInfo.dns) }))
+        if (usableIp(netInfo.gateway)) add(chip("⌂ Gateway", white, { addTarget(netInfo.gateway) }))
+        if (usableIp(netInfo.dns)) add(chip("DNS", white, { addTarget(netInfo.dns) }))
 
         val favs = loadList(PREF_FAVS)
         for (f in favs) {
@@ -921,7 +922,7 @@ class MainActivity : Activity() {
     // Console
     // =====================================================================
 
-    private fun append(line: String, color: Int = green) {
+    private fun append(line: String, color: Int = text) {
         val atBottom = scroll.getChildAt(0).let { child ->
             child == null || child.bottom - (scroll.height + scroll.scrollY) < dp(48)
         }
@@ -1448,7 +1449,7 @@ class MainActivity : Activity() {
                 }
                 val where = if (addresses.isEmpty()) "Esgotado o tempo limite" else addresses.joinToString(", ")
                 val hopReached = probes.any { it.reached }
-                val color = if (addresses.isEmpty()) amber else green
+                val color = if (addresses.isEmpty()) amber else text
                 val rawNotes: List<String> = when {
                     debug -> probes.mapNotNull { it.line }.distinct()
                     addresses.isEmpty() -> listOfNotNull(probes.firstNotNullOfOrNull { it.raw })
