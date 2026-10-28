@@ -80,7 +80,6 @@ class MainActivity : Activity() {
         const val MAX_TARGETS = 4
         const val MAX_HOPS = 30
         const val PROBES_PER_HOP = 3
-        const val SILENT_HOPS_LIMIT = 6
         const val MAX_CONSOLE_LINES = 600
         const val TRIM_LINES = 100
         const val MAX_HISTORY = 12
@@ -151,6 +150,7 @@ class MainActivity : Activity() {
     private var mode = Mode.IDLE
     private var lastRunMode = Mode.IDLE
     @Volatile private var stopRequested = false
+    private var traceDebug = false
 
     private val handler = Handler(Looper.getMainLooper())
     private val executor = Executors.newSingleThreadExecutor()
@@ -568,6 +568,16 @@ class MainActivity : Activity() {
         runButton = actionButton("▶ INICIAR", green, Color.rgb(5, 20, 10)) { startPing() }
         stopButton = actionButton("PARAR", Color.rgb(58, 34, 34), white, Color.rgb(90, 50, 50)) { stopRun() }
         traceButton = actionButton("TRACEROUTE", panel, green, panelStroke) { startTraceRoute() }
+        // Toque longo: mostra a linha crua que o ping devolveu em cada salto (para depurar o formato).
+        traceButton.setOnLongClickListener {
+            traceDebug = !traceDebug
+            Toast.makeText(
+                this,
+                if (traceDebug) "Traceroute: modo depuração ligado" else "Traceroute: modo depuração desligado",
+                Toast.LENGTH_SHORT
+            ).show()
+            true
+        }
         buttons.addView(runButton, lp(0, dp(46), 1.5f))
         buttons.addView(stopButton, lp(0, dp(46), 1f).apply { marginStart = dp(8) })
         buttons.addView(traceButton, lp(0, dp(46), 1.3f).apply { marginStart = dp(8) })
@@ -1365,11 +1375,25 @@ class MainActivity : Activity() {
         executor.execute { runTrace(host) }
     }
 
+    /** IP fora das faixas privadas/locais (um destino assim nunca está a 1 salto do celular). */
+    private fun isPublicIp(ip: String): Boolean {
+        val v4 = ip.split('.').mapNotNull { it.toIntOrNull() }
+        if (v4.size == 4) {
+            val (a, b) = v4[0] to v4[1]
+            return !(a == 10 || a == 127 || a == 0 ||
+                (a == 172 && b in 16..31) ||
+                (a == 192 && b == 168) ||
+                (a == 100 && b in 64..127) ||
+                (a == 169 && b == 254))
+        }
+        val lower = ip.lowercase()
+        return !(lower == "::1" || lower.startsWith("fe80") || lower.startsWith("fc") || lower.startsWith("fd"))
+    }
+
     private fun runTrace(host: String) {
         var failure: String? = null
         var reached = false
-        var silentHops = 0
-        var gaveUp = false
+        val debug = traceDebug
 
         try {
             val overhead = Tracer.calibrateOverhead(activeProcesses)
@@ -1399,21 +1423,28 @@ class MainActivity : Activity() {
                 val where = if (addresses.isEmpty()) "Esgotado o tempo limite" else addresses.joinToString(", ")
                 val hopReached = probes.any { it.reached }
                 val color = if (addresses.isEmpty()) amber else green
-                val rawNote = if (addresses.isEmpty()) probes.firstNotNullOfOrNull { it.raw } else null
+                val rawNotes: List<String> = when {
+                    debug -> probes.mapNotNull { it.line }.distinct()
+                    addresses.isEmpty() -> listOfNotNull(probes.firstNotNullOfOrNull { it.raw })
+                    else -> emptyList()
+                }
 
                 post {
                     append("${ttl.toString().padStart(2)}$cells  $where", color)
-                    if (rawNote != null) append("      ↳ $rawNote", muted)
+                    rawNotes.forEach { append("      ↳ $it", muted) }
+                }
+
+                // Um IP público não pode estar a 1 salto: o ping deste aparelho não respeitou o TTL.
+                val farAtFirstHop = ttl == 1 && probes.any { p -> p.reached && p.address?.let { isPublicIp(it) } == true }
+                if (farAtFirstHop) {
+                    failure = "o destino respondeu no salto 1 mesmo com TTL=1, então o ping deste aparelho ignora o TTL " +
+                        "e o traceroute não consegue mostrar os saltos intermediários. " +
+                        "Toque e segure em TRACEROUTE para ver a resposta crua."
+                    break
                 }
 
                 if (hopReached) {
                     reached = true
-                    break
-                }
-
-                silentHops = if (addresses.isEmpty()) silentHops + 1 else 0
-                if (silentHops >= SILENT_HOPS_LIMIT) {
-                    gaveUp = true
                     break
                 }
             }
@@ -1428,8 +1459,7 @@ class MainActivity : Activity() {
                 stopRequested -> append("Traceroute interrompido pelo usuário.", muted)
                 failure != null -> append("Falha no traceroute: $failure", red)
                 reached -> append("Destino alcançado.", green)
-                gaveUp -> append("Sem resposta nos últimos $SILENT_HOPS_LIMIT saltos; rastreamento encerrado.", amber)
-                else -> append("Rastreamento encerrado.", muted)
+                else -> append("Rastreamento encerrado ($MAX_HOPS saltos sem alcançar o destino).", amber)
             }
             append("────────────────────────────", muted)
             lastRunMode = Mode.TRACE

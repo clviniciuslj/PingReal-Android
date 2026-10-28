@@ -65,7 +65,26 @@ fun quickPing(host: String, count: Int, procs: MutableList<Process>): PingStats 
 /** Sonda de traceroute: um ping com TTL limitado. Compartilhado entre o traceroute e o diagnóstico. */
 object Tracer {
 
-    class Probe(val address: String?, val ms: Double?, val reached: Boolean, val raw: String?)
+    /**
+     * [raw] só vem preenchido quando nenhum endereço foi reconhecido; [line] é a linha que originou
+     * o resultado (ou a primeira linha da resposta), útil para depurar o formato do `ping`.
+     */
+    class Probe(
+        val address: String?,
+        val ms: Double?,
+        val reached: Boolean,
+        val raw: String?,
+        val line: String? = null
+    )
+
+    private val HEADER_IP = Regex("""^PING\s+\S+\s+\(([^)]+)\)""", RegexOption.IGNORE_CASE)
+
+    /** Compara dois IPs literais (IPv6 pode vir escrito de formas diferentes). */
+    private fun sameIp(a: String, b: String): Boolean = try {
+        java.net.InetAddress.getByName(a) == java.net.InetAddress.getByName(b)
+    } catch (_: Exception) {
+        a == b
+    }
 
     private val TTL_FIELD = Regex("""\bttl[= ]\d+""", RegexOption.IGNORE_CASE)
     private val TIME_FIELD = Regex("""time[=<]\s*([\d.]+)\s*ms""", RegexOption.IGNORE_CASE)
@@ -127,7 +146,9 @@ object Tracer {
         }
         val elapsedMs = (System.nanoTime() - started) / 1_000_000.0
 
-        val reply = lines.map { it.trim() }.filter { it.isNotEmpty() && !isNoise(it) }
+        val trimmed = lines.map { it.trim() }
+        val targetIp = trimmed.firstNotNullOfOrNull { HEADER_IP.find(it)?.groupValues?.get(1)?.trim() }
+        val reply = trimmed.filter { it.isNotEmpty() && !isNoise(it) }
 
         val destination = reply.firstOrNull {
             it.contains("bytes from", ignoreCase = true) && TTL_FIELD.containsMatchIn(it)
@@ -138,11 +159,14 @@ object Tracer {
         val source = destination ?: exceeded ?: anyFrom
         val address = source?.let { extractAddress(it) }
 
-        if (address == null) return Probe(null, null, false, reply.firstOrNull())
+        if (address == null) return Probe(null, null, false, reply.firstOrNull(), reply.firstOrNull())
 
         val reportedTime = source?.let { TIME_FIELD.find(it)?.groupValues?.get(1)?.toDoubleOrNull() }
         val ms = reportedTime ?: (elapsedMs - overheadMs).coerceAtLeast(0.5)
-        return Probe(address, ms, destination != null, null)
+
+        // "Alcançado" só vale se a resposta veio do endereço de destino (e não de um roteador no meio).
+        val reached = destination != null && (targetIp == null || sameIp(address, targetIp))
+        return Probe(address, ms, reached, null, source)
     }
 }
 
