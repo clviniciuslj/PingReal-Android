@@ -1402,21 +1402,6 @@ class MainActivity : Activity() {
         executor.execute { runTrace(host) }
     }
 
-    /** IP fora das faixas privadas/locais (um destino assim nunca está a 1 salto do celular). */
-    private fun isPublicIp(ip: String): Boolean {
-        val v4 = ip.split('.').mapNotNull { it.toIntOrNull() }
-        if (v4.size == 4) {
-            val (a, b) = v4[0] to v4[1]
-            return !(a == 10 || a == 127 || a == 0 ||
-                (a == 172 && b in 16..31) ||
-                (a == 192 && b == 168) ||
-                (a == 100 && b in 64..127) ||
-                (a == 169 && b == 254))
-        }
-        val lower = ip.lowercase()
-        return !(lower == "::1" || lower.startsWith("fe80") || lower.startsWith("fc") || lower.startsWith("fd"))
-    }
-
     private fun runTrace(host: String) {
         var failure: String? = null
         var reached = false
@@ -1459,14 +1444,6 @@ class MainActivity : Activity() {
                 post {
                     append("${ttl.toString().padStart(2)}$cells  $where", color)
                     rawNotes.forEach { append("      ↳ $it", muted) }
-                }
-
-                // Um IP público não pode estar a 1 salto: o ping deste aparelho não respeitou o TTL.
-                val farAtFirstHop = ttl == 1 && probes.any { p -> p.reached && p.address?.let { isPublicIp(it) } == true }
-                if (farAtFirstHop) {
-                    failure = "o destino respondeu no salto 1 mesmo com TTL=1, então o ping deste aparelho ignora o TTL " +
-                        "e o traceroute não consegue mostrar os saltos intermediários."
-                    break
                 }
 
                 if (hopReached) {
