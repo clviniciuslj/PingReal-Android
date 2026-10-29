@@ -20,9 +20,8 @@ import kotlin.math.sqrt
  * Gráfico de latência em tempo real, com uma ou mais séries.
  *
  * Cada curva é uma interpolação cúbica monotônica (Fritsch–Carlson), amostrada pixel a pixel, então
- * nunca "estoura" abaixo de zero nem faz picos falsos. O eixo X é o tempo real: o gráfico rola
- * continuamente a cada quadro, e a ponta direita fica [DELAY_MS] atrás do relógio, só o
- * bastante para a resposta (RTT) já ter chegado quando o ponto é desenhado.
+ * nunca "estoura" abaixo de zero nem faz picos falsos. O eixo X é o tempo real e a ponta direita é
+ * "agora": entre uma resposta e outra a curva é estendida até lá, então a linha anda continuamente.
  *
  * Com uma série só, a curva ganha preenchimento e o ponto atual muda de cor conforme a latência.
  * Com várias, cada série usa a sua cor.
@@ -44,12 +43,14 @@ class LatencyChartView(context: Context) : View(context) {
     }
 
     companion object {
-        // Sem atraso: a ponta direita é "agora". Entre uma resposta e outra a curva é estendida
-        // até lá (veja onDraw), então a linha anda continuamente sem ficar atrás do console.
-        private const val DELAY_MS = 0L
+        const val IDLE_TEXT = "Inicie um ping para ver a latência"
+
         private const val HEAD_GRACE_MS = 2500L
         private const val EASE_MS = 380f
         private const val WINDOW_MS = 60_000L
+
+        // A linha anda poucos pixels por segundo: 30 quadros/s ficam iguais a 60/120 e gastam menos bateria.
+        private const val FRAME_MS = 33L
 
         private val GOOD = Color.rgb(111, 207, 151)
         private val WARN = Color.rgb(229, 180, 84)
@@ -66,20 +67,25 @@ class LatencyChartView(context: Context) : View(context) {
         }
     }
 
-    var placeholder: String = "Inicie um ping para ver a latência"
+    var placeholder: String = IDLE_TEXT
+        set(value) {
+            field = value
+            invalidate()
+        }
 
     private val density = resources.displayMetrics.density
     private fun dp(v: Float) = v * density
 
     private var series: List<Series> = listOf(Series(GOOD))
     private var live = false
-    private var displayT = System.currentTimeMillis() - DELAY_MS
+    private var displayT = System.currentTimeMillis()
     private var curMax = 50f
     private var lastFrame = 0L
     private var runHeadX = 0f
 
     private val path = Path()
     private val fillPath = Path()
+    private val frameTick = Runnable { invalidate() }
 
     private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.argb(16, 255, 255, 255)
@@ -100,16 +106,10 @@ class LatencyChartView(context: Context) : View(context) {
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
-    private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-        strokeJoin = Paint.Join.ROUND
-    }
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val lossPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = dp(2f) }
     private val lossDotPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val haloPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     /** Define as séries (uma cor por alvo) e limpa os dados. */
     fun setSeries(colors: IntArray) {
@@ -121,14 +121,14 @@ class LatencyChartView(context: Context) : View(context) {
         series.forEach { it.samples.clear() }
         curMax = 50f
         lastFrame = 0L
-        displayT = System.currentTimeMillis() - DELAY_MS
-        postInvalidateOnAnimation()
+        displayT = System.currentTimeMillis()
+        invalidate()
     }
 
     fun setLive(value: Boolean) {
-        if (value && !live) displayT = System.currentTimeMillis() - DELAY_MS
+        if (value && !live) displayT = System.currentTimeMillis()
         live = value
-        postInvalidateOnAnimation()
+        invalidate()
     }
 
     fun addSample(index: Int, timeMs: Long, valueMs: Float) =
@@ -155,7 +155,7 @@ class LatencyChartView(context: Context) : View(context) {
         val cutoff = System.currentTimeMillis() - WINDOW_MS * 2
         while (list.size > 2 && list[0].t < cutoff) list.removeAt(0)
 
-        postInvalidateOnAnimation()
+        invalidate()
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -166,11 +166,22 @@ class LatencyChartView(context: Context) : View(context) {
         )
     }
 
+    override fun onDetachedFromWindow() {
+        removeCallbacks(frameTick)
+        super.onDetachedFromWindow()
+    }
+
+    /** Agenda o próximo quadro. Um só pendente por vez, mesmo que várias coisas peçam redesenho. */
+    private fun scheduleFrame() {
+        removeCallbacks(frameTick)
+        postDelayed(frameTick, FRAME_MS)
+    }
+
     override fun onDraw(canvas: Canvas) {
         val w = width.toFloat()
         val h = height.toFloat()
         val now = System.currentTimeMillis()
-        val dt = if (lastFrame == 0L) 16L else (now - lastFrame).coerceIn(1L, 100L)
+        val dt = if (lastFrame == 0L) FRAME_MS else (now - lastFrame).coerceIn(1L, 100L)
         lastFrame = now
         var animating = false
         val single = series.size == 1
@@ -179,10 +190,10 @@ class LatencyChartView(context: Context) : View(context) {
             ?.takeIf { it != Long.MIN_VALUE }
 
         // Tempo exibido na ponta direita do gráfico.
-        val targetT = if (live) now - DELAY_MS else (lastSampleT ?: displayT)
         if (live) {
-            displayT = targetT
+            displayT = now
         } else {
+            val targetT = lastSampleT ?: displayT
             val diff = targetT - displayT
             if (abs(diff) > 2L) {
                 val step = (diff * min(1.0, dt / 140.0)).roundToLong()
@@ -231,7 +242,7 @@ class LatencyChartView(context: Context) : View(context) {
 
         if (series.all { it.samples.isEmpty() }) {
             canvas.drawText(placeholder, w / 2f, (top + bottom) / 2f, emptyPaint)
-            if (animating || live) postInvalidateOnAnimation()
+            if (animating || live) scheduleFrame()
             return
         }
 
@@ -290,14 +301,11 @@ class LatencyChartView(context: Context) : View(context) {
         // Ponto na ponta (valor atual de cada série)
         for ((index, headValue) in heads.withIndex()) {
             if (headValue.isNaN()) continue
-            val x = headXs[index]
-            val y = yOf(headValue)
-            val color = if (single) colorFor(headValue.toDouble()) else series[index].color
-            dotPaint.color = color
-            canvas.drawCircle(x, y, dp(3.2f), dotPaint)
+            dotPaint.color = if (single) colorFor(headValue.toDouble()) else series[index].color
+            canvas.drawCircle(headXs[index], yOf(headValue), dp(3.2f), dotPaint)
         }
 
-        if (live || animating) postInvalidateOnAnimation()
+        if (live || animating) scheduleFrame()
     }
 
     /** Desenha um trecho [from..to] de amostras válidas. Devolve o valor na ponta direita, se coberta. */
@@ -360,8 +368,6 @@ class LatencyChartView(context: Context) : View(context) {
 
         if (single) canvas.drawPath(fillPath, fillPaint)
 
-        glowPaint.color = Color.argb(38, Color.red(s.color), Color.green(s.color), Color.blue(s.color))
-        glowPaint.strokeWidth = if (single) dp(7f) else dp(5f)
         linePaint.color = s.color
         linePaint.strokeWidth = if (single) dp(1.8f) else dp(1.6f)
         canvas.drawPath(path, linePaint)

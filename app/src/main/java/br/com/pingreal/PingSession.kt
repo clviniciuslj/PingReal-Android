@@ -5,16 +5,34 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
 
+/** Estatísticas acumuladas de um alvo. Uma "queda" é uma sequência de [OUTAGE_LOSSES] perdas seguidas. */
 class PingStats {
+    companion object {
+        const val OUTAGE_LOSSES = 3
+    }
+
     var received = 0
+        private set
     var lost = 0
     var min = Double.MAX_VALUE
+        private set
     var max = 0.0
-    var sum = 0.0
+        private set
     var last = -1.0
+        private set
     var lastWasLoss = false
+        private set
+    var outages = 0
+        private set
+    var longestOutageMs = 0L
+        private set
+
+    private var sum = 0.0
     private var jitterSum = 0.0
     private var jitterN = 0
+    private var lossStreak = 0
+    private var streakStart = 0L
+    private var inOutage = false
 
     val sent: Int get() = received + lost
     val avg: Double get() = if (received > 0) sum / received else 0.0
@@ -22,7 +40,8 @@ class PingStats {
     val jitterSamples: Int get() = jitterN
     val lossPct: Double get() = if (sent > 0) lost * 100.0 / sent else 0.0
 
-    fun add(ms: Double) {
+    /** Registra uma resposta. Devolve true se ela encerrou uma queda. */
+    fun addReply(ms: Double, at: Long): Boolean {
         if (last >= 0 && !lastWasLoss) {
             jitterSum += abs(ms - last)
             jitterN++
@@ -33,6 +52,32 @@ class PingStats {
         if (ms > max) max = ms
         last = ms
         lastWasLoss = false
+        lossStreak = 0
+        val ended = inOutage
+        closeOutage(at)
+        return ended
+    }
+
+    /** Registra uma perda. Devolve true se ela iniciou uma queda. */
+    fun addLoss(at: Long): Boolean {
+        lost++
+        last = -1.0
+        lastWasLoss = true
+        if (lossStreak == 0) streakStart = at
+        lossStreak++
+        if (!inOutage && lossStreak >= OUTAGE_LOSSES) {
+            inOutage = true
+            outages++
+            return true
+        }
+        return false
+    }
+
+    /** Fecha uma queda em aberto (ao voltar a responder ou ao parar o ping) para medir a duração. */
+    fun closeOutage(at: Long) {
+        if (!inOutage) return
+        longestOutageMs = max(longestOutageMs, at - streakStart)
+        inOutage = false
     }
 }
 
@@ -40,17 +85,17 @@ class PingReply(val address: String, val ttl: String, val timeMs: Double, val se
 
 /**
  * Um ping contra um único alvo. Roda o binário do sistema numa thread própria e entrega tudo
- * (respostas, perdas, erros, fim) ao [Listener] **na thread da UI**.
+ * (respostas, perdas, quedas, erros, fim) ao [Listener] **na thread da UI**.
  *
  * Cada execução do processo é uma "época": o `ping` recomeça a numerar os pacotes do 1, então ao
  * reiniciar o processo (por [restart] ou porque o sistema o encerrou) a contagem de sequência é zerada,
  * mas as estatísticas ([stats]) continuam acumulando.
  */
 class PingSession(
-    val label: String,
     val host: String,
     val continuous: Boolean,
     val count: Int,
+    val size: Int,
     val color: Int,
     private val listener: Listener,
     private val pool: ExecutorService,
@@ -58,14 +103,11 @@ class PingSession(
 ) {
     interface Listener {
         fun onReply(session: PingSession, reply: PingReply, sampleTime: Long)
+        fun onLoss(session: PingSession, sendTime: Long)
 
-        /** [blocked]: o envio falhou porque o Android bloqueou a rede do app (e não por falta de resposta). */
-        fun onLoss(session: PingSession, sendTime: Long, blocked: Boolean)
-        fun onBlockedChanged(session: PingSession, blocked: Boolean)
+        /** [down] = começou uma queda; false = voltou a responder depois de uma queda. */
+        fun onOutage(session: PingSession, down: Boolean)
         fun onErrorLine(session: PingSession, line: String)
-
-        /** O processo do ping foi encerrado pelo sistema e foi iniciado de novo. */
-        fun onRestarted(session: PingSession)
         fun onFinished(session: PingSession, error: String?)
     }
 
@@ -130,7 +172,6 @@ class PingSession(
     private var slotStart = 0L
     private var slotAnchored = false
     private var lastTickAt = 0L
-    private var blocked = false
     private var epochReplies = 0
 
     fun start() {
@@ -175,7 +216,6 @@ class PingSession(
         slotStart = System.currentTimeMillis()
         slotAnchored = false
         lastTickAt = 0L
-        blocked = false
         epochReplies = 0
     }
 
@@ -187,7 +227,8 @@ class PingSession(
     private fun runProcess(myEpoch: Int) {
         var error: String? = null
         try {
-            val args = mutableListOf("/system/bin/ping", "-W", "1", "-s", "32")
+            // -n: sem resolução reversa de nomes (evita atrasos quando o DNS está ruim).
+            val args = mutableListOf("/system/bin/ping", "-n", "-W", "1", "-s", size.toString())
             if (!continuous) {
                 args.add("-c")
                 args.add(count.toString())
@@ -225,7 +266,6 @@ class PingSession(
         // Só se já tinha funcionado, para não ficar num laço infinito com destino inválido.
         val diedOnItsOwn = continuous && !stopRequested && error == null && !hardError && epochReplies > 0
         if (diedOnItsOwn) {
-            listener.onRestarted(this)
             epoch++
             resetTracking()
             launch()
@@ -266,29 +306,25 @@ class PingSession(
 
         if (seq < nextSeq) stats.lost = max(0, stats.lost - 1) // chegou depois de marcado como perdido
 
-        if (blocked) {
-            blocked = false
-            listener.onBlockedChanged(this, false)
-        }
         epochReplies++
-        stats.add(reply.timeMs)
+        val outageEnded = stats.addReply(reply.timeMs, readAt)
         listener.onReply(this, reply, readAt - reply.timeMs.toLong())
+        if (outageEnded) listener.onOutage(this, false)
         checkLosses(false)
+    }
+
+    private fun registerLoss(at: Long) {
+        val outageBegan = stats.addLoss(at)
+        listener.onLoss(this, at)
+        if (outageBegan) listener.onOutage(this, true)
     }
 
     /** O envio do pacote atual falhou: registra a perda na hora, em vez de esperar o prazo vencer. */
     private fun onSendBlocked(at: Long) {
-        if (!blocked) {
-            blocked = true
-            listener.onBlockedChanged(this, true)
-        }
         val seq = ((at - slotStart) / 1000.0).roundToInt() + 1
         val limit = if (continuous) Int.MAX_VALUE else count
         if (seq < nextSeq || seq > limit || seq in answered || !settled.add(seq)) return
-        stats.lost++
-        stats.last = -1.0
-        stats.lastWasLoss = true
-        listener.onLoss(this, at, true)
+        registerLoss(at)
     }
 
     /** Marca como perdidos os pacotes cujo prazo venceu (ou todos os pendentes, se [force] e o ping for finito). */
@@ -299,12 +335,7 @@ class PingSession(
             if (force && continuous) break
             val sendTime = slotStart + (nextSeq - 1) * 1000L
             if (!force && sendTime + LOSS_TIMEOUT_MS > now) break
-            if (nextSeq !in answered && nextSeq !in settled) {
-                stats.lost++
-                stats.last = -1.0
-                stats.lastWasLoss = true
-                listener.onLoss(this, sendTime, false)
-            }
+            if (nextSeq !in answered && nextSeq !in settled) registerLoss(sendTime)
             nextSeq++
         }
     }
@@ -313,6 +344,7 @@ class PingSession(
         if (finished) return
         val clean = !stopRequested && error == null && !hardError
         checkLosses(force = clean)
+        stats.closeOutage(System.currentTimeMillis())
         finished = true
         listener.onFinished(this, error)
     }

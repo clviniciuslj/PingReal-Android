@@ -21,8 +21,29 @@ android {
         applicationId = "br.com.pingreal"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        // Subir os dois a cada mudança: versionCode +1, versionName 1.1 → 1.2 → ...
+        versionCode = 2
+        versionName = "1.1"
+    }
+
+    // Chave fixa: todo APK gerado (inclusive no GitHub) sai com a mesma assinatura,
+    // então dá para instalar por cima da versão anterior sem desinstalar.
+    signingConfigs {
+        create("pingreal") {
+            storeFile = file("pingreal.keystore")
+            storePassword = "pingreal"
+            keyAlias = "pingreal"
+            keyPassword = "pingreal"
+        }
+    }
+
+    buildTypes {
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("pingreal")
+        }
+        getByName("release") {
+            signingConfig = signingConfigs.getByName("pingreal")
+        }
     }
 }
 

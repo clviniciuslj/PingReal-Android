@@ -2,6 +2,7 @@ package br.com.pingreal
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.graphics.Color
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
@@ -18,17 +19,8 @@ import java.util.concurrent.Executors
 class DiagnosticPage(
     private val activity: Activity,
     private val ui: UiKit,
-    private val host: Host
+    private val host: PageHost
 ) {
-    interface Host {
-        fun acquire(label: String): Boolean
-        fun release()
-        fun netInfo(): NetInfo
-        fun post(block: () -> Unit)
-        fun shareText(text: String)
-        fun shareImage(title: String, body: String)
-    }
-
     private class Row(val glyph: TextView, val detail: TextView)
 
     val view: View
@@ -47,14 +39,10 @@ class DiagnosticPage(
     private var lastSpeed: SpeedResult? = null
     private var lastAt: Date? = null
 
-    private lateinit var diagStart: Button
-    private lateinit var diagStop: Button
-    private lateinit var speedStart: Button
-    private lateinit var speedStop: Button
+    private lateinit var diagButton: Button
+    private lateinit var speedButton: Button
     private lateinit var shareButton: Button
-    private lateinit var speedValue: TextView
-    private lateinit var speedPhase: TextView
-    private lateinit var speedBar: MeterBar
+    private lateinit var gauge: GaugeView
     private lateinit var speedDown: TextView
     private lateinit var speedUp: TextView
     private lateinit var speedPing: TextView
@@ -65,10 +53,9 @@ class DiagnosticPage(
         fun add(v: View) = content.addView(v, ui.lp(-1, -2).apply { bottomMargin = ui.dp(12) })
 
         add(buildDiagnosticCard())
-        add(buildStepsCard())
         add(buildSpeedCard())
 
-        shareButton = ui.button("ENVIAR RELATÓRIO", android.graphics.Color.TRANSPARENT, ui.white, ui.panelStroke) { showShareDialog() }
+        shareButton = ui.button("ENVIAR RELATÓRIO", Color.TRANSPARENT, ui.white, ui.panelStroke) { showShareDialog() }
         shareButton.visibility = View.GONE
         content.addView(shareButton, ui.lp(-1, ui.dp(46)).apply { bottomMargin = ui.dp(12) })
 
@@ -83,26 +70,18 @@ class DiagnosticPage(
 
     private fun buildDiagnosticCard(): View {
         val card = ui.card()
-        card.addView(ui.tv("DIAGNÓSTICO COMPLETO", 11f, ui.muted, bold = true, spacing = 0.1f))
-        val buttons = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
-        diagStart = ui.button("▶ INICIAR DIAGNÓSTICO", ui.green, android.graphics.Color.rgb(8, 20, 14)) { startDiagnostic() }
-        diagStop = ui.button("PARAR", android.graphics.Color.TRANSPARENT, ui.red, ui.panelStroke) { stopDiagnostic() }
-        buttons.addView(diagStart, ui.lp(0, ui.dp(46), 2f))
-        buttons.addView(diagStop, ui.lp(0, ui.dp(46), 1f).apply { marginStart = ui.dp(8) })
-        card.addView(buttons, ui.lp(-1, -2).apply { topMargin = ui.dp(10) })
-        return card
-    }
+        card.addView(ui.label("DIAGNÓSTICO"))
+        diagButton = ui.button("▶ INICIAR DIAGNÓSTICO", ui.green, ui.onGreen) {
+            if (diagRunning) engine?.cancel() else startDiagnostic()
+        }
+        card.addView(diagButton, ui.lp(-1, ui.dp(46)).apply { topMargin = ui.dp(10); bottomMargin = ui.dp(6) })
 
-    private fun buildStepsCard(): View {
-        val card = ui.card()
-        card.addView(ui.tv("ETAPAS", 11f, ui.muted, bold = true, spacing = 0.1f).apply { setPadding(0, 0, 0, ui.dp(6)) })
         for ((id, title) in DiagnosticEngine.STEP_TITLES) {
             val glyph = ui.tv("○", 16f, ui.muted, bold = true).apply { gravity = Gravity.CENTER_HORIZONTAL }
-            val titleView = ui.tv(title, 13f, ui.white, bold = true)
             val detail = ui.tv("", 11f, ui.muted).apply { visibility = View.GONE }
             val text = LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
-                addView(titleView)
+                addView(ui.tv(title, 13f, ui.white, bold = true))
                 addView(detail, ui.lp(-1, -2).apply { topMargin = ui.dp(1) })
             }
             val row = LinearLayout(activity).apply {
@@ -119,22 +98,10 @@ class DiagnosticPage(
 
     private fun buildSpeedCard(): View {
         val card = ui.card()
-        card.addView(ui.tv("TESTE DE VELOCIDADE", 11f, ui.muted, bold = true, spacing = 0.1f))
+        card.addView(ui.label("TESTE DE VELOCIDADE"))
 
-        val valueRow = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.BOTTOM
-        }
-        speedValue = ui.tv("—", 34f, ui.white, bold = true, mono = true)
-        valueRow.addView(speedValue)
-        valueRow.addView(ui.tv(" Mbps", 13f, ui.muted).apply { setPadding(0, 0, 0, ui.dp(6)) })
-        valueRow.addView(View(activity), ui.lp(0, 1, 1f))
-        speedPhase = ui.tv("", 11f, ui.muted, bold = true, spacing = 0.08f).apply { setPadding(0, 0, 0, ui.dp(8)) }
-        valueRow.addView(speedPhase)
-        card.addView(valueRow, ui.lp(-1, -2).apply { topMargin = ui.dp(10) })
-
-        speedBar = MeterBar(activity)
-        card.addView(speedBar, ui.lp(-1, -2).apply { topMargin = ui.dp(6); bottomMargin = ui.dp(12) })
+        gauge = GaugeView(activity)
+        card.addView(gauge, ui.lp(-1, -2).apply { topMargin = ui.dp(8) })
 
         val results = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
         fun cell(label: String): TextView {
@@ -147,18 +114,16 @@ class DiagnosticPage(
             results.addView(box, ui.lp(0, -2, 1f))
             return value
         }
-        speedDown = cell("DOWNLOAD")
-        speedUp = cell("UPLOAD")
+        speedDown = cell("↓ DOWNLOAD")
+        speedUp = cell("↑ UPLOAD")
         speedPing = cell("PING")
         speedJitter = cell("JITTER")
-        card.addView(results, ui.lp(-1, -2))
+        card.addView(results, ui.lp(-1, -2).apply { topMargin = ui.dp(10) })
 
-        val buttons = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
-        speedStart = ui.button("▶ TESTAR VELOCIDADE", android.graphics.Color.TRANSPARENT, ui.white, ui.panelStroke) { confirmSpeed() }
-        speedStop = ui.button("PARAR", android.graphics.Color.TRANSPARENT, ui.red, ui.panelStroke) { stopSpeed() }
-        buttons.addView(speedStart, ui.lp(0, ui.dp(46), 2f))
-        buttons.addView(speedStop, ui.lp(0, ui.dp(46), 1f).apply { marginStart = ui.dp(8) })
-        card.addView(buttons, ui.lp(-1, -2).apply { topMargin = ui.dp(14) })
+        speedButton = ui.button("▶ TESTAR VELOCIDADE", Color.TRANSPARENT, ui.white, ui.panelStroke) {
+            if (speedRunning) speed?.cancel() else confirmSpeed()
+        }
+        card.addView(speedButton, ui.lp(-1, ui.dp(46)).apply { topMargin = ui.dp(14) })
         return card
     }
 
@@ -169,16 +134,24 @@ class DiagnosticPage(
         refreshButtons()
     }
 
-    private fun setEnabled(b: Button, enabled: Boolean) {
-        b.isEnabled = enabled
-        b.alpha = if (enabled) 1f else 0.4f
-    }
-
     private fun refreshButtons() {
-        setEnabled(diagStart, idleGlobal)
-        setEnabled(speedStart, idleGlobal)
-        setEnabled(diagStop, diagRunning)
-        setEnabled(speedStop, speedRunning)
+        if (diagRunning) {
+            diagButton.text = "■ PARAR"
+            ui.danger(diagButton)
+        } else {
+            diagButton.text = "▶ INICIAR DIAGNÓSTICO"
+            ui.primary(diagButton)
+        }
+        ui.setEnabled(diagButton, diagRunning || idleGlobal)
+
+        if (speedRunning) {
+            speedButton.text = "■ PARAR"
+            ui.danger(speedButton)
+        } else {
+            speedButton.text = "▶ TESTAR VELOCIDADE"
+            ui.secondary(speedButton)
+        }
+        ui.setEnabled(speedButton, speedRunning || idleGlobal)
     }
 
     fun shutdown() {
@@ -217,7 +190,6 @@ class DiagnosticPage(
             when (step.status) {
                 Status.WARN -> ui.amber
                 Status.FAIL -> ui.red
-                Status.RUNNING -> ui.muted
                 else -> ui.muted
             }
         )
@@ -229,7 +201,7 @@ class DiagnosticPage(
 
     private fun startDiagnostic() {
         if (diagRunning || speedRunning) return
-        if (!host.acquire("DIAGNÓSTICO")) return
+        if (!host.acquire("DIAGNÓSTICO", ui.white)) return
 
         diagRunning = true
         refreshButtons()
@@ -251,10 +223,6 @@ class DiagnosticPage(
             }
             host.post { onDiagnosticDone(report, eng.cancelled) }
         }
-    }
-
-    private fun stopDiagnostic() {
-        engine?.cancel()
     }
 
     private fun onDiagnosticDone(report: DiagnosticReport?, cancelled: Boolean) {
@@ -293,18 +261,14 @@ class DiagnosticPage(
         }
     }
 
-    private fun fmtMbps(v: Double): String = if (v >= 100) v.toInt().toString() else String.format(Locale.US, "%.1f", v)
-
     private fun startSpeed() {
         if (diagRunning || speedRunning) return
-        if (!host.acquire("VELOCIDADE")) return
+        if (!host.acquire("VELOCIDADE", ui.white)) return
 
         speedRunning = true
         refreshButtons()
         shareButton.visibility = View.GONE
         for (t in listOf(speedDown, speedUp, speedPing, speedJitter)) t.text = "—"
-        speedValue.text = "—"
-        speedBar.fraction = 0f
         lastNet = host.netInfo()
         lastAt = Date()
 
@@ -313,22 +277,34 @@ class DiagnosticPage(
         executor.execute {
             val result = try {
                 test.run(object : SpeedTest.Listener {
-                    override fun onPhase(phase: Int, label: String) {
-                        host.post { speedPhase.text = label.uppercase() }
+                    override fun onPhase(phase: Int) {
+                        host.post {
+                            when (phase) {
+                                SpeedTest.PHASE_LATENCY -> {
+                                    gauge.setPhase("PING", ui.muted)
+                                    gauge.setText("…", "ms")
+                                }
+                                SpeedTest.PHASE_DOWN -> gauge.setPhase("↓ DOWNLOAD", ui.cyan)
+                                else -> gauge.setPhase("↑ UPLOAD", ui.violet)
+                            }
+                        }
+                    }
+
+                    override fun onLatency(pingMs: Double, jitterMs: Double) {
+                        host.post {
+                            if (pingMs > 0) {
+                                speedPing.text = "${ui.formatMs(pingMs)} ms"
+                                speedJitter.text = "${ui.formatMs(jitterMs)} ms"
+                                gauge.setText(ui.formatMs(pingMs), "ms")
+                            }
+                        }
                     }
 
                     override fun onProgress(phase: Int, mbps: Double, fraction: Float) {
+                        if (phase == SpeedTest.PHASE_LATENCY) return
                         host.post {
-                            val overall = when (phase) {
-                                SpeedTest.PHASE_LATENCY -> 0.1f * fraction
-                                SpeedTest.PHASE_DOWN -> 0.1f + 0.5f * fraction
-                                else -> 0.6f + 0.4f * fraction
-                            }
-                            speedBar.fraction = overall
-                            if (phase != SpeedTest.PHASE_LATENCY) {
-                                speedValue.text = fmtMbps(mbps)
-                                (if (phase == SpeedTest.PHASE_DOWN) speedDown else speedUp).text = fmtMbps(mbps)
-                            }
+                            gauge.setSpeed(mbps)
+                            (if (phase == SpeedTest.PHASE_DOWN) speedDown else speedUp).text = ui.formatMbps(mbps)
                         }
                     }
                 })
@@ -339,28 +315,26 @@ class DiagnosticPage(
         }
     }
 
-    private fun stopSpeed() {
-        speed?.cancel()
-    }
-
     private fun onSpeedDone(result: SpeedResult?, cancelled: Boolean) {
         speedRunning = false
         host.release()
         refreshButtons()
-        speedPhase.text = if (cancelled) "INTERROMPIDO" else "CONCLUÍDO"
 
         if (result == null) {
+            gauge.settle("FALHOU", "—", "Mbps")
             Toast.makeText(activity, "O teste de velocidade falhou", Toast.LENGTH_SHORT).show()
             return
         }
-        speedDown.text = if (result.downMbps > 0) fmtMbps(result.downMbps) else "falhou"
-        speedUp.text = if (result.upMbps > 0) fmtMbps(result.upMbps) else if (cancelled) "—" else "falhou"
-        speedPing.text = if (result.pingMs > 0) "${result.pingMs.toInt()} ms" else "—"
-        speedJitter.text = if (result.pingMs > 0) String.format(Locale.US, "%.1f ms", result.jitterMs) else "—"
-        speedValue.text = if (result.downMbps > 0) fmtMbps(result.downMbps) else "—"
-        if (!cancelled) speedBar.fraction = 1f
+        speedDown.text = if (result.downMbps > 0) ui.formatMbps(result.downMbps) else "falhou"
+        speedUp.text = if (result.upMbps > 0) ui.formatMbps(result.upMbps) else if (cancelled) "—" else "falhou"
 
-        if (!cancelled && (result.downMbps > 0 || result.upMbps > 0)) {
+        if (cancelled) {
+            gauge.settle("INTERROMPIDO", "—", "Mbps")
+            return
+        }
+        gauge.settle("CONCLUÍDO", if (result.downMbps > 0) ui.formatMbps(result.downMbps) else "—", "Mbps ↓")
+
+        if (result.downMbps > 0 || result.upMbps > 0) {
             lastSpeed = result
             shareButton.visibility = View.VISIBLE
         }
@@ -392,8 +366,8 @@ class DiagnosticPage(
         val speedResult = lastSpeed
         if (speedResult != null) {
             sb.append("\nVELOCIDADE\n")
-            sb.append("Download ${fmtMbps(speedResult.downMbps)} Mbps · Upload ${fmtMbps(speedResult.upMbps)} Mbps\n")
-            sb.append("Ping ${speedResult.pingMs.toInt()} ms · Jitter ${String.format(Locale.US, "%.1f", speedResult.jitterMs)} ms\n")
+            sb.append("Download ${ui.formatMbps(speedResult.downMbps)} Mbps · Upload ${ui.formatMbps(speedResult.upMbps)} Mbps\n")
+            sb.append("Ping ${ui.formatMs(speedResult.pingMs)} ms · Jitter ${ui.formatMs(speedResult.jitterMs)} ms\n")
         }
         return sb.toString().trimEnd()
     }
@@ -410,8 +384,12 @@ class DiagnosticPage(
         }
         AlertDialog.Builder(activity)
             .setTitle("Enviar relatório")
-            .setItems(arrayOf("Texto", "Imagem")) { _, which ->
-                if (which == 0) host.shareText(fullText()) else host.shareImage(title(), body())
+            .setItems(arrayOf("Enviar texto", "Enviar imagem", "Copiar texto")) { _, which ->
+                when (which) {
+                    0 -> host.shareText(fullText())
+                    1 -> host.shareImage(title(), body(), null)
+                    else -> host.copyText(fullText())
+                }
             }
             .show()
     }

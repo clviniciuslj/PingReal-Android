@@ -17,21 +17,13 @@ import java.net.InetAddress
 import java.net.SocketTimeoutException
 import java.net.URL
 import java.net.UnknownHostException
+import java.util.Locale
 import java.util.concurrent.Callable
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicLong
 import javax.net.ssl.SSLException
-import kotlin.math.max
 import kotlin.random.Random
-
-data class NetInfo(
-    val gateway: String,
-    val dns: String,
-    val ip: String,
-    val type: String
-)
 
 enum class Status { PENDING, RUNNING, OK, WARN, FAIL, SKIP }
 
@@ -39,140 +31,9 @@ class StepOutcome(val id: String, val title: String, var status: Status, var det
 
 class DiagnosticReport(val steps: List<StepOutcome>, val cancelled: Boolean)
 
-/** Ping bloqueante de poucos pacotes (usado pelo diagnóstico e pelo teste de velocidade). */
-fun quickPing(host: String, count: Int, procs: MutableList<Process>): PingStats {
-    val stats = PingStats()
-    val process = ProcessBuilder("/system/bin/ping", "-n", "-W", "1", "-s", "32", "-c", count.toString(), host)
-        .redirectErrorStream(true)
-        .start()
-    procs.add(process)
-    try {
-        process.inputStream.bufferedReader().use { reader ->
-            while (true) {
-                val line = reader.readLine() ?: break
-                PingSession.parseReply(line)?.let { stats.add(it.timeMs) }
-            }
-        }
-        process.waitFor()
-    } finally {
-        procs.remove(process)
-        process.destroy()
-    }
-    stats.lost = max(0, count - stats.received)
-    return stats
-}
-
-/** Sonda de traceroute: um ping com TTL limitado. Compartilhado entre o traceroute e o diagnóstico. */
-object Tracer {
-
-    /**
-     * [raw] só vem preenchido quando nenhum endereço foi reconhecido; [line] é a linha que originou
-     * o resultado (ou a primeira linha da resposta), útil para depurar o formato do `ping`.
-     */
-    class Probe(
-        val address: String?,
-        val ms: Double?,
-        val reached: Boolean,
-        val raw: String?,
-        val line: String? = null
-    )
-
-    private val HEADER_IP = Regex("""^PING\s+\S+\s+\(([^)]+)\)""", RegexOption.IGNORE_CASE)
-
-    /** Compara dois IPs literais (IPv6 pode vir escrito de formas diferentes). */
-    private fun sameIp(a: String, b: String): Boolean = try {
-        java.net.InetAddress.getByName(a) == java.net.InetAddress.getByName(b)
-    } catch (_: Exception) {
-        a == b
-    }
-
-    private val TTL_FIELD = Regex("""\bttl[= ]\d+""", RegexOption.IGNORE_CASE)
-    private val TIME_FIELD = Regex("""time[=<]\s*([\d.]+)\s*ms""", RegexOption.IGNORE_CASE)
-    private val FROM_ADDR = Regex(
-        """\bfrom\s+(?:\S+\s+\()?([0-9a-fA-F:.]+)\)?""",
-        RegexOption.IGNORE_CASE
-    )
-    private val EXCEEDED = listOf(
-        "time to live exceeded", "ttl exceeded", "time exceeded",
-        "hop limit", "ttl expired"
-    )
-
-    /** Custo fixo de abrir o processo do ping, descontado quando o roteador não informa `time=`. */
-    fun calibrateOverhead(procs: MutableList<Process>): Double = try {
-        val started = System.nanoTime()
-        val process = ProcessBuilder("/system/bin/ping", "-n", "-c", "1", "-W", "1", "127.0.0.1")
-            .redirectErrorStream(true)
-            .start()
-        procs.add(process)
-        try {
-            process.inputStream.bufferedReader().use { it.readText() }
-            process.waitFor()
-        } finally {
-            procs.remove(process)
-            process.destroy()
-        }
-        (System.nanoTime() - started) / 1_000_000.0
-    } catch (_: Exception) {
-        0.0
-    }
-
-    private fun isNoise(line: String): Boolean {
-        val lower = line.lowercase()
-        return lower.startsWith("ping ") ||
-            lower.startsWith("---") ||
-            lower.startsWith("rtt") ||
-            lower.startsWith("round-trip") ||
-            lower.contains("statistics") ||
-            lower.contains("packets transmitted") ||
-            (lower.contains("%") && lower.contains("loss"))
-    }
-
-    private fun extractAddress(line: String): String? =
-        FROM_ADDR.find(line)?.groupValues?.get(1)
-            ?.removeSuffix(":")
-            ?.takeIf { it.contains('.') || it.contains(':') }
-            ?.substringBefore('%')
-
-    fun probe(host: String, ttl: Int, overheadMs: Double, procs: MutableList<Process>): Probe {
-        val args = listOf("/system/bin/ping", "-n", "-c", "1", "-W", "2", "-t", ttl.toString(), host)
-        val started = System.nanoTime()
-        val process = ProcessBuilder(args).redirectErrorStream(true).start()
-        procs.add(process)
-        val lines = try {
-            process.inputStream.bufferedReader().use { it.readLines() }
-        } finally {
-            procs.remove(process)
-            process.destroy()
-        }
-        val elapsedMs = (System.nanoTime() - started) / 1_000_000.0
-
-        val trimmed = lines.map { it.trim() }
-        val targetIp = trimmed.firstNotNullOfOrNull { HEADER_IP.find(it)?.groupValues?.get(1)?.trim() }
-        val reply = trimmed.filter { it.isNotEmpty() && !isNoise(it) }
-
-        val destination = reply.firstOrNull {
-            it.contains("bytes from", ignoreCase = true) && TTL_FIELD.containsMatchIn(it)
-        }
-        val exceeded = reply.firstOrNull { l -> EXCEEDED.any { l.contains(it, ignoreCase = true) } }
-        val anyFrom = reply.firstOrNull { FROM_ADDR.containsMatchIn(it) && extractAddress(it) != null }
-
-        val source = destination ?: exceeded ?: anyFrom
-        val address = source?.let { extractAddress(it) }
-
-        if (address == null) return Probe(null, null, false, reply.firstOrNull(), reply.firstOrNull())
-
-        val reportedTime = source?.let { TIME_FIELD.find(it)?.groupValues?.get(1)?.toDoubleOrNull() }
-        val ms = reportedTime ?: (elapsedMs - overheadMs).coerceAtLeast(0.5)
-
-        // "Alcançado" só vale se a resposta veio do endereço de destino (e não de um roteador no meio).
-        val reached = destination != null && (targetIp == null || sameIp(address, targetIp))
-        return Probe(address, ms, reached, null, source)
-    }
-}
-
 /**
  * Diagnóstico em camadas: da conexão do celular até a navegação. Roda bloqueando a thread
- * que o chamou e avisa cada etapa por [run]'s `update`.
+ * que o chamou e avisa cada etapa pelo `update` de [run].
  */
 class DiagnosticEngine(private val context: Context) {
 
@@ -327,7 +188,7 @@ class DiagnosticEngine(private val context: Context) {
             if (speed > 0) parts.add("link $speed Mbps")
         } else if (net.type.startsWith("Móvel")) {
             status = Status.WARN
-            parts.add("Dados móveis (para testar a fibra do cliente, conecte ao Wi-Fi dele)")
+            parts.add("Dados móveis")
         } else {
             parts.add(net.type)
         }
@@ -340,7 +201,7 @@ class DiagnosticEngine(private val context: Context) {
             if (status == Status.OK) status = Status.WARN
             parts.add("portal cativo detectado")
         }
-        if (net.type.contains("VPN")) parts.add("VPN ativa pode interferir nos testes")
+        if (net.type.contains("VPN")) parts.add("VPN ativa")
 
         return status to parts.joinToString(" · ")
     }
@@ -361,18 +222,15 @@ class DiagnosticEngine(private val context: Context) {
         val ip = net.ip
         val v6 = if (hasGlobalIpv6()) "IPv6: sim" else "IPv6: não"
         return when {
-            ip == "—" || ip == "N/D" -> Status.FAIL to "O celular não tem endereço IP"
+            !isUsableAddress(ip) -> Status.FAIL to "O celular não tem endereço IP"
             ip.startsWith("169.254.") ->
                 Status.FAIL to "IP $ip (autoatribuído): o roteador não entregou IP via DHCP"
             else -> Status.OK to "IP $ip · $v6"
         }
     }
 
-    private fun usable(value: String) =
-        value != "—" && value != "N/D" && value.matches(Regex("[A-Za-z0-9._:%-]+"))
-
     private fun gatewayStep(net: NetInfo): Pair<Status, String> {
-        if (!usable(net.gateway)) {
+        if (!isUsableAddress(net.gateway)) {
             return if (net.type.startsWith("Móvel")) {
                 Status.SKIP to "Sem gateway nos dados móveis"
             } else {
@@ -388,7 +246,7 @@ class DiagnosticEngine(private val context: Context) {
         }
     }
 
-    private fun ms(v: Double) = if (v < 10) String.format("%.1f ms", v) else "${v.toInt()} ms"
+    private fun ms(v: Double) = if (v < 10) String.format(Locale.US, "%.1f ms", v) else "${v.toInt()} ms"
 
     private fun internetStep(): Pair<Status, String> {
         val futures = INTERNET_TARGETS.map { target ->
@@ -463,7 +321,7 @@ class DiagnosticEngine(private val context: Context) {
     }
 
     private fun dnsStep(net: NetInfo): Pair<Status, String> {
-        val clientIp = net.dns.takeIf { usable(it) }
+        val clientIp = net.dns.takeIf { isUsableAddress(it) }
         val clientMs = clientIp?.let { dnsQuery(it, DNS_NAME) }
         val publicMs = dnsQuery("1.1.1.1", DNS_NAME)
         val systemMs = systemResolve(DNS_NAME)
@@ -496,7 +354,7 @@ class DiagnosticEngine(private val context: Context) {
         conn.readTimeout = 6000
         conn.instanceFollowRedirects = false
         conn.useCaches = false
-        conn.setRequestProperty("User-Agent", "RealPing/1.0")
+        conn.setRequestProperty("User-Agent", "RealPing")
         val started = System.nanoTime()
         try {
             val code = conn.responseCode
@@ -525,15 +383,17 @@ class DiagnosticEngine(private val context: Context) {
     private fun webStep(): WebResult {
         var httpOk = false
         var portal = false
-        var httpInfo: String
-        try {
+        val httpInfo: String = try {
             val r = http("http://connectivitycheck.gstatic.com/generate_204")
-            when {
-                r.code == 204 -> { httpOk = true; httpInfo = "HTTP ok (${r.ms} ms)" }
-                else -> { portal = true; httpInfo = "HTTP devolveu ${r.code}" }
+            if (r.code == 204) {
+                httpOk = true
+                "HTTP ok (${r.ms} ms)"
+            } else {
+                portal = true
+                "HTTP devolveu ${r.code}"
             }
         } catch (e: Exception) {
-            httpInfo = "HTTP falhou: ${describe(e)}"
+            "HTTP falhou: ${describe(e)}"
         }
 
         var httpsOk = false
@@ -607,156 +467,6 @@ class DiagnosticEngine(private val context: Context) {
             lastAddress != null ->
                 Status.FAIL to "A rota para no salto $lastAnswered ($lastAddress) · $path"
             else -> Status.FAIL to "Nenhum salto respondeu · $path"
-        }
-    }
-}
-
-// ============================================================================
-// Teste de velocidade
-// ============================================================================
-
-class SpeedResult(val downMbps: Double, val upMbps: Double, val pingMs: Double, val jitterMs: Double)
-
-class SpeedTest {
-
-    interface Listener {
-        fun onPhase(phase: Int, label: String)
-        fun onProgress(phase: Int, mbps: Double, fraction: Float)
-    }
-
-    companion object {
-        const val PHASE_LATENCY = 0
-        const val PHASE_DOWN = 1
-        const val PHASE_UP = 2
-
-        private const val DOWN_URL = "https://speed.cloudflare.com/__down?bytes=25000000"
-        private const val UP_URL = "https://speed.cloudflare.com/__up"
-        private const val DOWN_SECONDS = 8
-        private const val UP_SECONDS = 6
-        private const val WARMUP_NS = 1_500_000_000L
-    }
-
-    @Volatile var cancelled = false
-        private set
-
-    private val procs = CopyOnWriteArrayList<Process>()
-    private val connections = CopyOnWriteArrayList<HttpURLConnection>()
-
-    fun cancel() {
-        cancelled = true
-        procs.forEach { it.destroy() }
-        connections.forEach { try { it.disconnect() } catch (_: Exception) {} }
-    }
-
-    fun run(listener: Listener): SpeedResult {
-        listener.onPhase(PHASE_LATENCY, "Latência")
-        listener.onProgress(PHASE_LATENCY, 0.0, 0f)
-        val ping = try {
-            quickPing("1.1.1.1", 6, procs)
-        } catch (_: Exception) {
-            PingStats()
-        }
-        listener.onProgress(PHASE_LATENCY, 0.0, 1f)
-        if (cancelled) return SpeedResult(0.0, 0.0, ping.avg, ping.jitter)
-
-        listener.onPhase(PHASE_DOWN, "Download")
-        val down = transfer(download = true, seconds = DOWN_SECONDS, threads = 4, phase = PHASE_DOWN, listener = listener)
-        if (cancelled) return SpeedResult(down, 0.0, ping.avg, ping.jitter)
-
-        listener.onPhase(PHASE_UP, "Upload")
-        val up = transfer(download = false, seconds = UP_SECONDS, threads = 3, phase = PHASE_UP, listener = listener)
-
-        return SpeedResult(down, up, ping.avg, ping.jitter)
-    }
-
-    private fun transfer(download: Boolean, seconds: Int, threads: Int, phase: Int, listener: Listener): Double {
-        val total = AtomicLong(0)
-        val startNs = System.nanoTime()
-        val endNs = startNs + seconds * 1_000_000_000L
-        val pool = Executors.newFixedThreadPool(threads)
-
-        repeat(threads) {
-            pool.execute {
-                val buffer = ByteArray(64 * 1024)
-                while (System.nanoTime() < endNs && !cancelled) {
-                    var conn: HttpURLConnection? = null
-                    try {
-                        conn = (URL(if (download) DOWN_URL else UP_URL).openConnection() as HttpURLConnection).apply {
-                            connectTimeout = 5000
-                            readTimeout = 6000
-                            useCaches = false
-                            if (!download) {
-                                requestMethod = "POST"
-                                doOutput = true
-                                setChunkedStreamingMode(64 * 1024)
-                                setRequestProperty("Content-Type", "application/octet-stream")
-                            }
-                        }
-                        connections.add(conn)
-                        if (download) {
-                            conn.inputStream.use { input ->
-                                while (System.nanoTime() < endNs && !cancelled) {
-                                    val n = input.read(buffer)
-                                    if (n < 0) break
-                                    total.addAndGet(n.toLong())
-                                }
-                            }
-                        } else {
-                            conn.outputStream.use { out ->
-                                while (System.nanoTime() < endNs && !cancelled) {
-                                    out.write(buffer)
-                                    total.addAndGet(buffer.size.toLong())
-                                }
-                            }
-                        }
-                    } catch (_: Exception) {
-                        try { Thread.sleep(200) } catch (_: InterruptedException) { return@execute }
-                    } finally {
-                        conn?.let {
-                            connections.remove(it)
-                            try { it.disconnect() } catch (_: Exception) {}
-                        }
-                    }
-                }
-            }
-        }
-
-        // Amostrador: calcula a velocidade a cada 200 ms (média das últimas 5 amostras).
-        val recent = ArrayDeque<Double>()
-        var lastNs = startNs
-        var lastBytes = 0L
-        var warmBytes = -1L
-        var warmNs = 0L
-        while (System.nanoTime() < endNs && !cancelled) {
-            try { Thread.sleep(200) } catch (_: InterruptedException) { break }
-            val now = System.nanoTime()
-            val bytes = total.get()
-            val dt = (now - lastNs) / 1e9
-            if (dt > 0) {
-                recent.addLast((bytes - lastBytes) * 8 / dt / 1e6)
-                if (recent.size > 5) recent.removeFirst()
-            }
-            if (warmBytes < 0 && now - startNs >= WARMUP_NS) {
-                warmBytes = bytes
-                warmNs = now
-            }
-            lastNs = now
-            lastBytes = bytes
-            listener.onProgress(phase, recent.average(), ((now - startNs) / (seconds * 1e9)).toFloat().coerceIn(0f, 1f))
-        }
-
-        val finishNs = System.nanoTime()
-        val finishBytes = total.get()
-        connections.forEach { try { it.disconnect() } catch (_: Exception) {} }
-        pool.shutdownNow()
-        listener.onProgress(phase, recent.lastOrNull() ?: 0.0, 1f)
-
-        return if (warmBytes >= 0 && finishNs > warmNs) {
-            (finishBytes - warmBytes) * 8 / ((finishNs - warmNs) / 1e9) / 1e6
-        } else if (finishNs > startNs) {
-            finishBytes * 8 / ((finishNs - startNs) / 1e9) / 1e6
-        } else {
-            0.0
         }
     }
 }
