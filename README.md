@@ -15,6 +15,8 @@ App Android para ping, traceroute, diagnóstico de conexão e teste de velocidad
 - Verificação em etapas: conexão, IP (DHCP), roteador, internet, DNS, navegação, IP público e rota.
 - Teste de velocidade (download, upload, ping e jitter) com velocímetro.
 
+**Widget** (tela inicial): pílula com o IP de destino, botão ▶/■ e o resultado mais recente. Tocar no campo de IP abre uma janelinha para digitar (widgets do Android não aceitam campo de texto). O ping do widget e o do app são **a mesma sessão**: ela vive no `PingHub`, roda num serviço em primeiro plano (com notificação) e continua com o app fechado. Abrir o app durante o teste mostra o mesmo ping, com o histórico, sem reiniciar. Parar no widget ou no app para a mesma sessão.
+
 **Opções** (botão ⋮ no topo): manter a tela ligada durante o ping e vibrar quando a conexão cair e voltar.
 
 ## Sintaxe do campo de alvo

@@ -1,11 +1,13 @@
 package br.com.pingreal
 
+import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -39,12 +41,15 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.max
 
-/** Moldura do app: cabeçalho, abas, barra inferior, rede, compartilhamento e "um teste por vez". */
+/**
+ * Moldura do app: cabeçalho, abas, barra inferior, rede, compartilhamento e "um teste por vez".
+ * O ping em si não pertence a esta tela: vive no [PingHub] e sobrevive a ela.
+ */
 class MainActivity : Activity(), PageHost {
 
     private companion object {
-        const val PREFS = "pingreal"
         const val STATE_RESUME_PING = "resume_ping"
+        const val REQUEST_NOTIFICATIONS = 1
     }
 
     private lateinit var ui: UiKit
@@ -58,8 +63,8 @@ class MainActivity : Activity(), PageHost {
     private val tabIcons = ArrayList<NavIconView>()
     private val tabLabels = ArrayList<TextView>()
 
-    private var busy = false
-    private var backgroundedAt = 0L
+    /** Teste desta tela em andamento (traceroute, diagnóstico, velocidade): rótulo e cor do status. */
+    private var appTest: Pair<String, Int>? = null
     private var cachedNet = NetInfo.EMPTY
 
     private val handler = Handler(Looper.getMainLooper())
@@ -72,6 +77,12 @@ class MainActivity : Activity(), PageHost {
         override fun onLinkPropertiesChanged(network: Network, props: LinkProperties) = scheduleNetworkRefresh()
     }
     private var callbackRegistered = false
+
+    /** Só acompanha se há ping em andamento (iniciado aqui ou pelo widget) para o status e o bloqueio de outros testes. */
+    private val pingState = object : PingHub.Observer {
+        override fun onStarted() = syncBusy()
+        override fun onFinished() = syncBusy()
+    }
 
     // =====================================================================
     // Ciclo de vida
@@ -90,21 +101,24 @@ class MainActivity : Activity(), PageHost {
         selectTab(0)
         refreshNetwork()
 
-        // O Android encerrou o app em segundo plano enquanto ele pingava: ao voltar, continua o ping.
-        if (savedInstanceState?.getBoolean(STATE_RESUME_PING) == true) {
+        // Sem argumento de linhas: este observador só quer saber do estado, não do histórico.
+        PingHub.attach(pingState, Long.MAX_VALUE)
+        syncBusy()
+
+        // O processo foi encerrado pelo sistema com um ping ativo: aqui o hub está vazio, então retoma.
+        // (Se a tela só foi recriada no mesmo processo, o hub continua rodando e a tela se reconecta sozinha.)
+        if (savedInstanceState?.getBoolean(STATE_RESUME_PING) == true && !PingHub.running) {
             handler.post { terminal.resumePing() }
         }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        if (terminal.isPinging()) outState.putBoolean(STATE_RESUME_PING, true)
+        if (PingHub.running) outState.putBoolean(STATE_RESUME_PING, true)
     }
 
     override fun onStart() {
         super.onStart()
-        if (backgroundedAt != 0L) terminal.onReturnedToForeground(System.currentTimeMillis() - backgroundedAt)
-        backgroundedAt = 0L
         try {
             getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(networkCallback)
             callbackRegistered = true
@@ -115,7 +129,6 @@ class MainActivity : Activity(), PageHost {
     }
 
     override fun onStop() {
-        backgroundedAt = System.currentTimeMillis()
         if (callbackRegistered) {
             try {
                 getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkCallback)
@@ -128,6 +141,9 @@ class MainActivity : Activity(), PageHost {
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
+        PingHub.detach(pingState)
+        // Testes desta tela morrem com ela; o ping do hub NÃO (segue no serviço).
+        PingHub.externalBusy = false
         if (::terminal.isInitialized) terminal.shutdown()
         if (::diagnostic.isInitialized) diagnostic.shutdown()
         super.onDestroy()
@@ -138,17 +154,17 @@ class MainActivity : Activity(), PageHost {
     // =====================================================================
 
     override fun acquire(label: String, color: Int): Boolean {
-        if (busy) return false
-        busy = true
-        setStatus(label, color)
-        notifyMode()
+        if (PingHub.running || appTest != null) return false
+        appTest = label to color
+        PingHub.externalBusy = true
+        syncBusy()
         return true
     }
 
     override fun release() {
-        busy = false
-        setStatus("PRONTO", ui.muted)
-        notifyMode()
+        appTest = null
+        PingHub.externalBusy = false
+        syncBusy()
     }
 
     override fun netInfo(): NetInfo = try {
@@ -157,7 +173,7 @@ class MainActivity : Activity(), PageHost {
         cachedNet
     }
 
-    override fun prefs(): SharedPreferences = getSharedPreferences(PREFS, MODE_PRIVATE)
+    override fun prefs(): SharedPreferences = Prefs.of(this)
 
     override fun post(block: () -> Unit) {
         runOnUiThread { if (!isFinishing && !isDestroyed) block() }
@@ -168,6 +184,14 @@ class MainActivity : Activity(), PageHost {
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         } else {
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
+    override fun requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATIONS)
         }
     }
 
@@ -204,8 +228,15 @@ class MainActivity : Activity(), PageHost {
         }
     }
 
-    private fun notifyMode() {
-        val idle = !busy
+    /** Ocupado = há ping (daqui ou do widget) ou um teste desta tela. Atualiza o status e as abas. */
+    private fun syncBusy() {
+        val test = appTest
+        when {
+            PingHub.running -> setStatus("PING ATIVO", ui.green)
+            test != null -> setStatus(test.first, test.second)
+            else -> setStatus("PRONTO", ui.muted)
+        }
+        val idle = !PingHub.running && test == null
         if (::terminal.isInitialized) terminal.onModeChanged(idle)
         if (::diagnostic.isInitialized) diagnostic.onModeChanged(idle)
     }
@@ -350,17 +381,15 @@ class MainActivity : Activity(), PageHost {
         val p = prefs()
         val items = arrayOf("Manter a tela ligada durante o ping", "Vibrar quando a conexão cair e voltar")
         val checked = booleanArrayOf(
-            p.getBoolean(TerminalPage.PREF_KEEP_SCREEN, true),
-            p.getBoolean(TerminalPage.PREF_VIBRATE, true)
+            p.getBoolean(Prefs.KEEP_SCREEN, true),
+            p.getBoolean(Prefs.VIBRATE, true)
         )
         AlertDialog.Builder(this)
             .setTitle("Opções")
             .setMultiChoiceItems(items, checked) { _, which, isChecked ->
-                val key = if (which == 0) TerminalPage.PREF_KEEP_SCREEN else TerminalPage.PREF_VIBRATE
+                val key = if (which == 0) Prefs.KEEP_SCREEN else Prefs.VIBRATE
                 p.edit().putBoolean(key, isChecked).apply()
-                if (which == 0) {
-                    if (isChecked) terminal.applyKeepScreen() else setKeepScreenOn(false)
-                }
+                if (which == 0) terminal.applyKeepScreen()
             }
             .setPositiveButton("OK", null)
             .show()

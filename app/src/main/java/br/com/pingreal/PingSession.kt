@@ -184,19 +184,6 @@ class PingSession(
         process?.destroy()
     }
 
-    /**
-     * Reinicia o processo do ping mantendo as estatísticas. Usado ao voltar para o app, para não depender
-     * de um processo que pode ter ficado preso durante o bloqueio da tela.
-     */
-    fun restart() {
-        // Ping com quantidade fixa seguiria a própria contagem: reiniciar o faria enviar pacotes a mais.
-        if (finished || stopRequested || !continuous) return
-        epoch++
-        process?.destroy()
-        resetTracking()
-        launch()
-    }
-
     /** Chamado periodicamente pela UI para detectar pacotes cujo prazo venceu. */
     fun tick() {
         if (finished || stopRequested) return

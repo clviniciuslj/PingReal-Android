@@ -6,10 +6,6 @@ import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.os.Build
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
 import android.text.Editable
 import android.text.InputType
 import android.text.SpannableString
@@ -38,25 +34,19 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import kotlin.math.roundToInt
 
-/** Aba "Terminal": ping (um ou vários alvos), traceroute, gráfico, console e rede atual. */
+/**
+ * Aba "Terminal": mostra a sessão de ping (que pertence ao [PingHub] e pode ter sido iniciada pelo widget),
+ * mais o traceroute, o gráfico, o console e a rede atual. Fechar o app não interrompe o ping.
+ */
 class TerminalPage(
     private val activity: Activity,
     private val ui: UiKit,
     private val host: PageHost
-) {
-    private enum class Run { IDLE, PING, TRACE }
-
-    private class Target(val host: String, val continuous: Boolean, val count: Int, val size: Int)
+) : PingHub.Observer {
 
     private class RowViews(val cur: TextView, val avg: TextView, val loss: TextView)
 
     companion object {
-        const val PREF_HOST = "host"
-        const val PREF_KEEP_SCREEN = "keep_screen"
-        const val PREF_VIBRATE = "vibrate_outage"
-
-        private const val PREF_FAVS = "favorites"
-        private const val PREF_HIST = "history"
         private const val MAX_TARGETS = 4
         private const val MAX_HOPS = 30
         private const val PROBES_PER_HOP = 3
@@ -94,71 +84,86 @@ class TerminalPage(
 
     private val multiRows = ArrayList<RowViews>()
 
-    private var run = Run.IDLE
-    private var lastRun = Run.IDLE
+    private var tracing = false
+    private var lastRun = LastRun.NONE
     private var idleGlobal = true
     @Volatile private var stopRequested = false
     private var traceDebug = false
 
+    // Só o traceroute roda aqui; o ping fica no PingHub.
     private val executor = Executors.newSingleThreadExecutor()
-    private val sessionPool = Executors.newCachedThreadPool()
     private val probePool = Executors.newFixedThreadPool(PROBES_PER_HOP)
     private val activeProcesses = CopyOnWriteArrayList<Process>()
 
     private val buffer = SpannableStringBuilder()
     private var consoleLines = 0
 
-    private var sessions: List<PingSession> = emptyList()
+    /** Última linha da sessão do hub já mostrada: ao reconectar, só o que faltar é reenviado. */
+    private var lastSeq = 0L
     private val emptyStats = PingStats()
     private var netInfo = NetInfo.EMPTY
 
-    private val lossTick = object : Runnable {
-        override fun run() {
-            if (run != Run.PING) return
-            sessions.forEach { it.tick() }
-            updateStats()
-            view.postDelayed(this, 500)
-        }
-    }
-
-    private val sessionListener = object : PingSession.Listener {
-        override fun onReply(session: PingSession, reply: PingReply, sampleTime: Long) {
-            chart.addSample(sessions.indexOf(session), sampleTime, reply.timeMs.toFloat())
-            val shown = if (reply.timeMs < 1) "<1" else reply.timeMs.roundToInt().toString()
-            append(
-                "${prefix(session)}Resposta de ${reply.address}: bytes=${session.size} tempo=${shown}ms TTL=${reply.ttl}",
-                if (sessions.size > 1) session.color else ui.text
-            )
-            updateStats()
-        }
-
-        override fun onLoss(session: PingSession, sendTime: Long) {
-            chart.addLoss(sessions.indexOf(session), sendTime)
-            append("${prefix(session)}Esgotado o tempo limite da solicitação.", ui.amber)
-            updateStats()
-        }
-
-        override fun onOutage(session: PingSession, down: Boolean) {
-            if (!host.prefs().getBoolean(PREF_VIBRATE, true)) return
-            vibrate(if (down) longArrayOf(0, 400, 150, 400) else longArrayOf(0, 70, 90, 70))
-        }
-
-        override fun onErrorLine(session: PingSession, line: String) {
-            append("${prefix(session)}$line", ui.red)
-        }
-
-        override fun onFinished(session: PingSession, error: String?) {
-            printSummary(session, error)
-            if (sessions.all { it.finished }) completeRun()
-        }
-    }
+    private enum class LastRun { NONE, PING, TRACE }
 
     init {
         view = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         build()
-        hostInput.setText(host.prefs().getString(PREF_HOST, "") ?: "")
+        hostInput.setText(host.prefs().getString(Prefs.HOST, "") ?: "")
         refreshButtons()
         updateStats()
+        // Conecta por último: se já existe uma sessão (iniciada pelo widget, ou antes de a tela ser
+        // recriada), o histórico dela é reenviado e a tela mostra o mesmo teste, sem reiniciar nada.
+        PingHub.attach(this, 0L)
+    }
+
+    // =====================================================================
+    // Sessão do hub (PingHub.Observer)
+    // =====================================================================
+
+    override fun onStarted() {
+        val sessions = PingHub.sessions
+        val colors = IntArray(sessions.size) { ui.series[it % ui.series.size] }
+        lastRun = LastRun.PING
+        chart.placeholder = if (PingHub.running) "Aguardando respostas…" else LatencyChartView.IDLE_TEXT
+        chart.setSeries(colors)
+        chart.setLive(PingHub.running)
+        buildStatsPanel()
+        updateStats()
+        refreshButtons()
+        applyKeepScreen()
+        // O IP em execução fica visível no campo, mesmo quando a sessão veio do widget.
+        if (PingHub.running && hostInput.text.toString().trim() != PingHub.raw) {
+            hostInput.setText(PingHub.raw)
+        }
+    }
+
+    override fun onLine(line: PingHub.Line) {
+        lastSeq = line.seq
+        append(line.text, colorOf(line.kind))
+    }
+
+    override fun onSample(index: Int, time: Long, ms: Float) {
+        if (ms < 0f) chart.addLoss(index, time) else chart.addSample(index, time, ms)
+    }
+
+    override fun onStats() = updateStats()
+
+    override fun onFinished() {
+        chart.setLive(false)
+        chart.placeholder = LatencyChartView.IDLE_TEXT
+        host.setKeepScreenOn(false)
+        refreshButtons()
+        updateStats()
+    }
+
+    private fun colorOf(kind: Int): Int = when {
+        kind >= PingHub.SERIES -> ui.series[(kind - PingHub.SERIES) % ui.series.size]
+        kind == PingHub.MUTED -> ui.muted
+        kind == PingHub.WHITE -> ui.white
+        kind == PingHub.AMBER -> ui.amber
+        kind == PingHub.RED -> ui.red
+        kind == PingHub.GREEN -> ui.green
+        else -> ui.text
     }
 
     // =====================================================================
@@ -176,18 +181,11 @@ class TerminalPage(
         refreshChips()
     }
 
-    /** Ao voltar para o app: reinicia o ping em andamento, para não depender de um processo preso no bloqueio. */
-    fun onReturnedToForeground(awayMs: Long) {
-        if (run == Run.PING && awayMs > 2000) sessions.forEach { it.restart() }
-    }
-
-    fun isPinging(): Boolean = run == Run.PING
-
     /** Retoma o último ping depois que o sistema encerrou o app em segundo plano. */
     fun resumePing() = startPing()
 
     fun applyKeepScreen() {
-        if (run == Run.PING) host.setKeepScreenOn(host.prefs().getBoolean(PREF_KEEP_SCREEN, true))
+        host.setKeepScreenOn(PingHub.running && host.prefs().getBoolean(Prefs.KEEP_SCREEN, true))
     }
 
     fun hideKeyboard() {
@@ -196,13 +194,12 @@ class TerminalPage(
         hostInput.clearFocus()
     }
 
+    /** Fecha a tela. O ping NÃO é interrompido: a sessão continua no hub (e no serviço). Só o traceroute para. */
     fun shutdown() {
+        PingHub.detach(this)
         stopRequested = true
-        view.removeCallbacks(lossTick)
-        sessions.forEach { it.stop() }
         activeProcesses.forEach { it.destroy() }
         executor.shutdownNow()
-        sessionPool.shutdownNow()
         probePool.shutdownNow()
     }
 
@@ -231,7 +228,7 @@ class TerminalPage(
             imeOptions = EditorInfo.IME_ACTION_GO
             setOnEditorActionListener { _, actionId, _ ->
                 if (actionId == EditorInfo.IME_ACTION_GO) {
-                    if (run == Run.IDLE) startPing()
+                    if (!PingHub.running && !tracing) startPing()
                     true
                 } else {
                     false
@@ -272,14 +269,14 @@ class TerminalPage(
             setPadding(0, ui.dp(10), 0, ui.dp(10))
         }
         runButton = ui.button("▶ INICIAR", ui.green, ui.onGreen) {
-            if (run == Run.PING) stopRun() else startPing()
+            if (PingHub.running) PingHub.stop() else startPing()
         }
         traceButton = ui.button("TRACEROUTE", Color.TRANSPARENT, ui.white, ui.panelStroke) {
-            if (run == Run.TRACE) stopRun() else startTraceRoute()
+            if (tracing) stopTrace() else startTraceRoute()
         }
         // Toque longo: mostra a linha crua que o ping devolveu em cada salto (para depurar o formato).
         traceButton.setOnLongClickListener {
-            if (run == Run.IDLE) {
+            if (!tracing && !PingHub.running) {
                 traceDebug = !traceDebug
                 Toast.makeText(
                     activity,
@@ -375,8 +372,8 @@ class TerminalPage(
     }
 
     private fun refreshButtons() {
-        when (run) {
-            Run.PING -> {
+        when {
+            PingHub.running -> {
                 runButton.text = "■ PARAR"
                 ui.danger(runButton)
                 ui.setEnabled(runButton, true)
@@ -384,7 +381,7 @@ class TerminalPage(
                 ui.secondary(traceButton)
                 ui.setEnabled(traceButton, false)
             }
-            Run.TRACE -> {
+            tracing -> {
                 runButton.text = "▶ INICIAR"
                 ui.primary(runButton)
                 ui.setEnabled(runButton, false)
@@ -392,7 +389,7 @@ class TerminalPage(
                 ui.danger(traceButton)
                 ui.setEnabled(traceButton, true)
             }
-            Run.IDLE -> {
+            else -> {
                 runButton.text = "▶ INICIAR"
                 ui.primary(runButton)
                 ui.setEnabled(runButton, idleGlobal)
@@ -403,7 +400,7 @@ class TerminalPage(
         }
     }
 
-    /** "Wi-Fi 192.168.0.23 · GW 192.168.0.1 · DNS 192.168.0.1", com rótulos em cinza. */
+    /** "Wi-Fi 192.168.0.23 · GW 192.168.0.1 · DNS 8.8.8.8", com rótulos em cinza (GW/DNS juntos se iguais). */
     private fun updateNetLine() {
         val sb = SpannableStringBuilder()
         fun part(label: String?, value: String) {
@@ -431,6 +428,7 @@ class TerminalPage(
     // =====================================================================
 
     private fun buildStatsPanel() {
+        val sessions = PingHub.sessions
         val multi = sessions.size > 1
         singleStats.visibility = if (multi) View.GONE else View.VISIBLE
         multiBox.visibility = if (multi) View.VISIBLE else View.GONE
@@ -481,7 +479,8 @@ class TerminalPage(
     }
 
     private fun updateStats() {
-        if (sessions.size > 1) updateMultiStats() else updateSingleStats(sessions.firstOrNull()?.stats ?: emptyStats)
+        val sessions = PingHub.sessions
+        if (sessions.size > 1) updateMultiStats(sessions) else updateSingleStats(sessions.firstOrNull()?.stats ?: emptyStats)
     }
 
     private fun updateSingleStats(s: PingStats) {
@@ -509,7 +508,7 @@ class TerminalPage(
         statOutages.setTextColor(if (s.outages > 0) ui.red else ui.white)
     }
 
-    private fun updateMultiStats() {
+    private fun updateMultiStats(sessions: List<PingSession>) {
         for ((i, s) in sessions.withIndex()) {
             val row = multiRows.getOrNull(i) ?: continue
             val st = s.stats
@@ -533,11 +532,6 @@ class TerminalPage(
         }
     }
 
-    private fun formatDuration(ms: Long): String {
-        val seconds = (ms + 500) / 1000
-        return if (seconds < 60) "$seconds s" else String.format(Locale.US, "%d min %02d s", seconds / 60, seconds % 60)
-    }
-
     // =====================================================================
     // Favoritos e histórico
     // =====================================================================
@@ -550,10 +544,10 @@ class TerminalPage(
     }
 
     private fun addHistory(entry: String) {
-        val list = loadList(PREF_HIST)
+        val list = loadList(Prefs.HISTORY)
         list.remove(entry)
         list.add(0, entry)
-        saveList(PREF_HIST, list.take(MAX_HISTORY))
+        saveList(Prefs.HISTORY, list.take(MAX_HISTORY))
         refreshChips()
     }
 
@@ -563,15 +557,15 @@ class TerminalPage(
             Toast.makeText(activity, "Digite um alvo para favoritar", Toast.LENGTH_SHORT).show()
             return
         }
-        val favs = loadList(PREF_FAVS)
+        val favs = loadList(Prefs.FAVORITES)
         if (!favs.remove(entry)) favs.add(0, entry)
-        saveList(PREF_FAVS, favs)
+        saveList(Prefs.FAVORITES, favs)
         refreshChips()
     }
 
     private fun updateStar() {
         if (!::favButton.isInitialized) return
-        val fav = hostInput.text.toString().trim().let { it.isNotEmpty() && it in loadList(PREF_FAVS) }
+        val fav = hostInput.text.toString().trim().let { it.isNotEmpty() && it in loadList(Prefs.FAVORITES) }
         favButton.text = if (fav) "★" else "☆"
         favButton.setTextColor(if (fav) ui.amber else ui.muted)
     }
@@ -598,18 +592,18 @@ class TerminalPage(
         if (isUsableAddress(netInfo.gateway)) add(chip("⌂ Gateway", ui.white, { addTarget(netInfo.gateway) }))
         if (isUsableAddress(netInfo.dns)) add(chip("DNS", ui.white, { addTarget(netInfo.dns) }))
 
-        val favs = loadList(PREF_FAVS)
+        val favs = loadList(Prefs.FAVORITES)
         for (f in favs) {
             add(chip("★ ${short(f)}", ui.amber, { fill(f) }, {
                 favs.remove(f)
-                saveList(PREF_FAVS, favs)
+                saveList(Prefs.FAVORITES, favs)
                 Toast.makeText(activity, "Favorito removido", Toast.LENGTH_SHORT).show()
                 refreshChips()
             }))
         }
-        for (h in loadList(PREF_HIST).filter { it !in favs }) {
+        for (h in loadList(Prefs.HISTORY).filter { it !in favs }) {
             add(chip(short(h), ui.muted, { fill(h) }, {
-                saveList(PREF_HIST, loadList(PREF_HIST).filter { it != h })
+                saveList(Prefs.HISTORY, loadList(Prefs.HISTORY).filter { it != h })
                 Toast.makeText(activity, "Removido do histórico", Toast.LENGTH_SHORT).show()
                 refreshChips()
             }))
@@ -675,31 +669,15 @@ class TerminalPage(
         host.copyText(buffer.toString())
     }
 
-    private fun prefix(session: PingSession): String =
-        if (sessions.size > 1) "[${session.host}] " else ""
-
-    @Suppress("DEPRECATION")
-    private fun vibrate(pattern: LongArray) {
-        try {
-            val vibrator = if (Build.VERSION.SDK_INT >= 31) {
-                activity.getSystemService(VibratorManager::class.java)?.defaultVibrator
-            } else {
-                activity.getSystemService(Vibrator::class.java)
-            }
-            vibrator?.vibrate(VibrationEffect.createWaveform(pattern, -1))
-        } catch (_: Exception) {
-        }
-    }
-
     // =====================================================================
-    // Ping (um ou vários alvos)
+    // Ping (a sessão pertence ao PingHub)
     // =====================================================================
 
     /**
      * Interpreta um alvo no formato `host [-t] [-n N] [-l TAMANHO]` (também aceita `-c` e `-s`).
      * Mostra o erro no console e devolve null se inválido.
      */
-    private fun parseSegment(segment: String): Target? {
+    private fun parseSegment(segment: String): PingTarget? {
         val parts = segment.split(WHITESPACE).filter { it.isNotBlank() }
         val target = parseHost(parts.firstOrNull().orEmpty())
         if (target == null) {
@@ -742,11 +720,11 @@ class TerminalPage(
                 }
             }
         }
-        return Target(target, continuous, count, size)
+        return PingTarget(target, continuous, count, size)
     }
 
     private fun startPing() {
-        if (run != Run.IDLE) return
+        if (PingHub.running || tracing) return
 
         val raw = hostInput.text.toString().trim()
         val segments = raw.split(',').map { it.trim() }.filter { it.isNotEmpty() }
@@ -760,106 +738,18 @@ class TerminalPage(
             return
         }
 
-        val targets = ArrayList<Target>()
+        val targets = ArrayList<PingTarget>()
         for (segment in segments) targets.add(parseSegment(segment) ?: return)
 
-        if (!host.acquire("PING ATIVO", ui.green)) return
-
-        host.prefs().edit().putString(PREF_HOST, raw).apply()
+        host.requestNotificationPermission()
+        hideKeyboard()
+        host.prefs().edit().putString(Prefs.HOST, raw).apply()
         addHistory(raw)
 
-        append("")
-        append(RULE, ui.muted)
-        append("> $raw", ui.white)
-        if (targets.size == 1) {
-            val t = targets[0]
-            val sizeNote = if (t.size != DEFAULT_SIZE) " com ${t.size} bytes" else ""
-            append(
-                if (t.continuous) "Ping contínuo para ${t.host}$sizeNote"
-                else "Ping para ${t.host} (${t.count} tentativas)$sizeNote",
-                ui.muted
-            )
-        } else {
-            append("Ping simultâneo para ${targets.size} alvos", ui.muted)
+        // O hub imprime o cabeçalho, cria as sessões e avisa esta tela (onStarted) e o serviço.
+        if (!PingHub.start(activity, raw, targets)) {
+            append("Já existe um teste em andamento.", ui.amber)
         }
-        append("")
-
-        startSessions(targets)
-    }
-
-    private fun startSessions(targets: List<Target>) {
-        hideKeyboard()
-        stopRequested = false
-
-        val colors = IntArray(targets.size) { ui.series[it % ui.series.size] }
-        sessions = targets.mapIndexed { i, t ->
-            PingSession(t.host, t.continuous, t.count, t.size, colors[i], sessionListener, sessionPool, host::post)
-        }
-
-        run = Run.PING
-        refreshButtons()
-        chart.placeholder = "Aguardando respostas…"
-        chart.setSeries(colors)
-        chart.setLive(true)
-        buildStatsPanel()
-        updateStats()
-        applyKeepScreen()
-        view.postDelayed(lossTick, 500)
-
-        sessions.forEach { it.start() }
-    }
-
-    private fun printSummary(session: PingSession, error: String?) {
-        val s = session.stats
-        val tag = prefix(session)
-        if (s.sent > 0) {
-            append("")
-            append("${tag}Estatísticas do Ping para ${session.host}:", ui.white)
-            append(
-                "    Pacotes: Enviados = ${s.sent}, Recebidos = ${s.received}, " +
-                    "Perdidos = ${s.lost} (${s.lossPct.roundToInt()}% de perda),",
-                ui.white
-            )
-            if (s.received > 0) {
-                append(
-                    "    Mínimo = ${ui.formatMs(s.min)}ms, Máximo = ${ui.formatMs(s.max)}ms, " +
-                        "Média = ${ui.formatMs(s.avg)}ms, Jitter = ${ui.formatMs(s.jitter)}ms",
-                    ui.white
-                )
-            } else {
-                append("    Nenhuma resposta válida recebida.", ui.amber)
-            }
-            if (s.outages > 0) {
-                append("    Quedas = ${s.outages} (maior: ${formatDuration(s.longestOutageMs)})", ui.amber)
-            }
-        }
-        when {
-            error != null -> append("${tag}Erro: $error", ui.red)
-            session.hardError -> append("${tag}Falha ao resolver ou alcançar o destino.", ui.red)
-        }
-    }
-
-    private fun completeRun() {
-        view.removeCallbacks(lossTick)
-        chart.setLive(false)
-        chart.placeholder = LatencyChartView.IDLE_TEXT
-        append(if (stopRequested) "Interrompido pelo usuário." else "Concluído.", ui.muted)
-        append(RULE, ui.muted)
-
-        run = Run.IDLE
-        lastRun = Run.PING
-        host.setKeepScreenOn(false)
-        host.release()
-        refreshButtons()
-        updateStats()
-    }
-
-    private fun stopRun() {
-        if (run == Run.IDLE) return
-        stopRequested = true
-        append("Interrompendo...", ui.muted)
-        sessions.forEach { it.stop() }
-        activeProcesses.forEach { it.destroy() }
     }
 
     // =====================================================================
@@ -872,7 +762,7 @@ class TerminalPage(
         val sb = StringBuilder()
         sb.append("Rede: ${netInfo.type} · IP ${netInfo.ip}\n")
         sb.append("Gateway ${netInfo.gateway} · DNS ${netInfo.dns}\n")
-        for (s in sessions) {
+        for (s in PingHub.sessions) {
             val st = s.stats
             sb.append('\n')
             sb.append("▸ ").append(s.host).append('\n')
@@ -898,12 +788,12 @@ class TerminalPage(
     }
 
     private fun showShareDialog() {
-        if (buffer.isEmpty() && sessions.isEmpty()) {
+        if (buffer.isEmpty() && PingHub.sessions.isEmpty()) {
             Toast.makeText(activity, "Nada para enviar ainda", Toast.LENGTH_SHORT).show()
             return
         }
         // Depois de um ping há um resumo; depois de um traceroute (ou nada) só o texto do console.
-        val pingReport = sessions.isNotEmpty() && lastRun == Run.PING
+        val pingReport = PingHub.sessions.isNotEmpty() && lastRun == LastRun.PING
         val options = if (pingReport) {
             arrayOf("Enviar resumo (texto)", "Enviar imagem (gráfico + estatísticas)", "Copiar console")
         } else {
@@ -926,8 +816,15 @@ class TerminalPage(
     // Traceroute
     // =====================================================================
 
+    private fun stopTrace() {
+        if (!tracing) return
+        stopRequested = true
+        append("Interrompendo...", ui.muted)
+        activeProcesses.forEach { it.destroy() }
+    }
+
     private fun startTraceRoute() {
-        if (run != Run.IDLE) return
+        if (tracing || PingHub.running) return
 
         val firstSegment = hostInput.text.toString().split(',').firstOrNull().orEmpty().trim()
         val target = parseHost(firstSegment.split(WHITESPACE).firstOrNull().orEmpty())
@@ -935,9 +832,12 @@ class TerminalPage(
             append("Informe um IP ou hostname válido para o traceroute.", ui.amber)
             return
         }
-        if (!host.acquire("TRACEROUTE", ui.amber)) return
+        if (!host.acquire("TRACEROUTE", ui.amber)) {
+            append("Já existe um teste em andamento.", ui.amber)
+            return
+        }
 
-        host.prefs().edit().putString(PREF_HOST, target).apply()
+        host.prefs().edit().putString(Prefs.HOST, target).apply()
         hideKeyboard()
 
         append("")
@@ -947,7 +847,7 @@ class TerminalPage(
         append("")
 
         stopRequested = false
-        run = Run.TRACE
+        tracing = true
         refreshButtons()
         executor.execute { runTrace(target) }
     }
@@ -1015,8 +915,8 @@ class TerminalPage(
                 else -> append("Rastreamento encerrado ($MAX_HOPS saltos sem alcançar o destino).", ui.amber)
             }
             append(RULE, ui.muted)
-            run = Run.IDLE
-            lastRun = Run.TRACE
+            tracing = false
+            lastRun = LastRun.TRACE
             host.release()
             refreshButtons()
         }

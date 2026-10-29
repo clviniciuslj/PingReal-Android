@@ -27,23 +27,23 @@ import kotlin.math.sin
 /** Paleta e construtores de view usados por todas as telas (montadas em código). */
 class UiKit(private val context: Context) {
 
-    val bg = Color.rgb(11, 11, 12)
-    val panel = Color.rgb(18, 19, 21)
-    val panelStroke = Color.rgb(36, 38, 41)
-    val consoleBg = Color.rgb(8, 9, 10)
-    val green = Color.rgb(111, 207, 151)
-    val cyan = Color.rgb(108, 180, 238)
-    val violet = Color.rgb(183, 156, 237)
-    val orange = Color.rgb(232, 162, 99)
-    val amber = Color.rgb(229, 180, 84)
-    val red = Color.rgb(229, 115, 115)
-    val white = Color.rgb(230, 232, 234)
-    val text = Color.rgb(190, 194, 198)
-    val muted = Color.rgb(138, 143, 148)
-    val onGreen = Color.rgb(8, 20, 14)
+    val bg = Palette.bg
+    val panel = Palette.panel
+    val panelStroke = Palette.panelStroke
+    val consoleBg = Palette.consoleBg
+    val green = Palette.green
+    val cyan = Palette.cyan
+    val violet = Palette.violet
+    val orange = Palette.orange
+    val amber = Palette.amber
+    val red = Palette.red
+    val white = Palette.white
+    val text = Palette.text
+    val muted = Palette.muted
+    val onGreen = Palette.onGreen
 
     /** Cores das curvas quando há vários alvos. */
-    val series = intArrayOf(green, cyan, violet, orange)
+    val series = Palette.series
 
     private val density = context.resources.displayMetrics.density
 
@@ -146,11 +146,9 @@ class UiKit(private val context: Context) {
             setOnClickListener { onClick() }
         }
 
-    fun formatMs(ms: Double): String =
-        if (ms < 10) String.format(Locale.US, "%.1f", ms) else ms.toInt().toString()
+    fun formatMs(ms: Double): String = br.com.pingreal.formatMs(ms)
 
-    fun formatMbps(v: Double): String =
-        if (v >= 100) v.toInt().toString() else String.format(Locale.US, "%.1f", v)
+    fun formatMbps(v: Double): String = br.com.pingreal.formatMbps(v)
 }
 
 /** Ícones da barra inferior, desenhados em código. */
