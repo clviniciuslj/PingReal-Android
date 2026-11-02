@@ -15,7 +15,12 @@ App Android para ping, traceroute, diagnóstico de conexão e teste de velocidad
 - Verificação em etapas: conexão, IP (DHCP), roteador, internet, DNS, navegação, IP público e rota.
 - Teste de velocidade (download, upload, ping e jitter) com velocímetro.
 
-**Widget** (tela inicial): pílula com o IP de destino, botão ▶/■ e o resultado mais recente. Tocar no campo de IP abre uma janelinha para digitar (widgets do Android não aceitam campo de texto). O ping do widget e o do app são **a mesma sessão**: ela vive no `PingHub`, roda num serviço em primeiro plano (com notificação) e continua com o app fechado. Abrir o app durante o teste mostra o mesmo ping, com o histórico, sem reiniciar. Parar no widget ou no app para a mesma sessão.
+**Condomínio** (casinha): as ONUs por quadra e lote, como no Monitor de ONUs do PC (IP `172.16.quadra.lote`).
+- Cadastro de ONU (quadra, lote, identificação opcional), editar, remover e importar CSV/TXT (`quadra,lote[,identificação]` ou o IP).
+- Toque numa ONU: ping individual (1 por segundo) numa janela, que para ao fechar. Toque longo: editar ou remover.
+- **Pingar quadra**: 8 pings em cada ONU da quadra, resultado no console; o quadradinho vermelho indica ONU que perdeu pacote.
+- **Pingar tudo**: monitoramento contínuo de todas as ONUs a cada 3 s, com a regra das 3 falhas seguidas (Online, Instável, Sem resposta/Erro).
+- Resumo (total, respondendo, sem resposta, enviados, recebidos, perda), busca e filtro "só com erro".
 
 **Opções** (botão ⋮ no topo): manter a tela ligada durante o ping e vibrar quando a conexão cair e voltar.
 
@@ -35,6 +40,10 @@ O app usa o `/system/bin/ping` do próprio Android; as respostas vêm do process
 O workflow `.github/workflows/build-apk.yml` compila a cada push na `main` (ou manualmente em **Actions → Build Android APK → Run workflow**). Ao terminar, baixe o artefato **PingReal-APK** e instale o `app-debug.apk`.
 
 O APK é assinado sempre com a mesma chave (`app/pingreal.keystore`), então cada versão nova instala por cima da anterior, sem desinstalar e sem perder favoritos e histórico.
+
+## Testes
+
+`gradle testDebugUnitTest` roda os testes da regra das 3 falhas, do importador, do monitoramento e do "pingar quadra" (com um ping falso, sem rede).
 
 ## Versões
 

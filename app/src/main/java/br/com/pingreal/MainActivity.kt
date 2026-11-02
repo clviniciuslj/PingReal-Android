@@ -1,13 +1,11 @@
 package br.com.pingreal
 
-import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
 import android.content.SharedPreferences
-import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -41,20 +39,18 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.max
 
-/**
- * Moldura do app: cabeçalho, abas, barra inferior, rede, compartilhamento e "um teste por vez".
- * O ping em si não pertence a esta tela: vive no [PingHub] e sobrevive a ela.
- */
+/** Moldura do app: cabeçalho, abas, barra inferior, rede, compartilhamento e "um teste por vez". */
 class MainActivity : Activity(), PageHost {
 
     private companion object {
         const val STATE_RESUME_PING = "resume_ping"
-        const val REQUEST_NOTIFICATIONS = 1
+        const val REQUEST_IMPORT = 2
     }
 
     private lateinit var ui: UiKit
     private lateinit var terminal: TerminalPage
     private lateinit var diagnostic: DiagnosticPage
+    private lateinit var condo: CondoPage
     private lateinit var root: LinearLayout
     private lateinit var nav: LinearLayout
     private lateinit var statusText: TextView
@@ -63,8 +59,9 @@ class MainActivity : Activity(), PageHost {
     private val tabIcons = ArrayList<NavIconView>()
     private val tabLabels = ArrayList<TextView>()
 
-    /** Teste desta tela em andamento (traceroute, diagnóstico, velocidade): rótulo e cor do status. */
-    private var appTest: Pair<String, Int>? = null
+    private var busy = false
+    private var importCallback: ((String) -> Unit)? = null
+    private var backgroundedAt = 0L
     private var cachedNet = NetInfo.EMPTY
 
     private val handler = Handler(Looper.getMainLooper())
@@ -77,12 +74,6 @@ class MainActivity : Activity(), PageHost {
         override fun onLinkPropertiesChanged(network: Network, props: LinkProperties) = scheduleNetworkRefresh()
     }
     private var callbackRegistered = false
-
-    /** Só acompanha se há ping em andamento (iniciado aqui ou pelo widget) para o status e o bloqueio de outros testes. */
-    private val pingState = object : PingHub.Observer {
-        override fun onStarted() = syncBusy()
-        override fun onFinished() = syncBusy()
-    }
 
     // =====================================================================
     // Ciclo de vida
@@ -101,24 +92,21 @@ class MainActivity : Activity(), PageHost {
         selectTab(0)
         refreshNetwork()
 
-        // Sem argumento de linhas: este observador só quer saber do estado, não do histórico.
-        PingHub.attach(pingState, Long.MAX_VALUE)
-        syncBusy()
-
-        // O processo foi encerrado pelo sistema com um ping ativo: aqui o hub está vazio, então retoma.
-        // (Se a tela só foi recriada no mesmo processo, o hub continua rodando e a tela se reconecta sozinha.)
-        if (savedInstanceState?.getBoolean(STATE_RESUME_PING) == true && !PingHub.running) {
+        // O Android encerrou o app em segundo plano enquanto ele pingava: ao voltar, continua o ping.
+        if (savedInstanceState?.getBoolean(STATE_RESUME_PING) == true) {
             handler.post { terminal.resumePing() }
         }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        if (PingHub.running) outState.putBoolean(STATE_RESUME_PING, true)
+        if (terminal.isPinging()) outState.putBoolean(STATE_RESUME_PING, true)
     }
 
     override fun onStart() {
         super.onStart()
+        if (backgroundedAt != 0L) terminal.onReturnedToForeground(System.currentTimeMillis() - backgroundedAt)
+        backgroundedAt = 0L
         try {
             getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(networkCallback)
             callbackRegistered = true
@@ -129,6 +117,7 @@ class MainActivity : Activity(), PageHost {
     }
 
     override fun onStop() {
+        backgroundedAt = System.currentTimeMillis()
         if (callbackRegistered) {
             try {
                 getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkCallback)
@@ -141,11 +130,9 @@ class MainActivity : Activity(), PageHost {
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
-        PingHub.detach(pingState)
-        // Testes desta tela morrem com ela; o ping do hub NÃO (segue no serviço).
-        PingHub.externalBusy = false
         if (::terminal.isInitialized) terminal.shutdown()
         if (::diagnostic.isInitialized) diagnostic.shutdown()
+        if (::condo.isInitialized) condo.shutdown()
         super.onDestroy()
     }
 
@@ -154,17 +141,17 @@ class MainActivity : Activity(), PageHost {
     // =====================================================================
 
     override fun acquire(label: String, color: Int): Boolean {
-        if (PingHub.running || appTest != null) return false
-        appTest = label to color
-        PingHub.externalBusy = true
-        syncBusy()
+        if (busy) return false
+        busy = true
+        setStatus(label, color)
+        notifyMode()
         return true
     }
 
     override fun release() {
-        appTest = null
-        PingHub.externalBusy = false
-        syncBusy()
+        busy = false
+        setStatus("PRONTO", ui.muted)
+        notifyMode()
     }
 
     override fun netInfo(): NetInfo = try {
@@ -187,11 +174,44 @@ class MainActivity : Activity(), PageHost {
         }
     }
 
-    override fun requestNotificationPermission() {
-        if (Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATIONS)
+    override fun pickTextFile(onText: (String) -> Unit) {
+        importCallback = onText
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            putExtra(
+                Intent.EXTRA_MIME_TYPES,
+                arrayOf(
+                    "text/*", "text/csv", "application/csv", "text/comma-separated-values",
+                    "application/vnd.ms-excel", "application/octet-stream"
+                )
+            )
+        }
+        try {
+            startActivityForResult(intent, REQUEST_IMPORT)
+        } catch (_: Exception) {
+            importCallback = null
+            Toast.makeText(this, "Não há um seletor de arquivos disponível.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_IMPORT) return
+        val callback = importCallback
+        importCallback = null
+        val uri = data?.data
+        if (resultCode != RESULT_OK || uri == null || callback == null) return
+        try {
+            val text = contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+            if (text == null) {
+                Toast.makeText(this, "Não foi possível ler o arquivo.", Toast.LENGTH_LONG).show()
+            } else {
+                callback(text)
+            }
+        } catch (e: Exception) {
+            Toast.makeText(this, "Não foi possível ler o arquivo: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -228,17 +248,11 @@ class MainActivity : Activity(), PageHost {
         }
     }
 
-    /** Ocupado = há ping (daqui ou do widget) ou um teste desta tela. Atualiza o status e as abas. */
-    private fun syncBusy() {
-        val test = appTest
-        when {
-            PingHub.running -> setStatus("PING ATIVO", ui.green)
-            test != null -> setStatus(test.first, test.second)
-            else -> setStatus("PRONTO", ui.muted)
-        }
-        val idle = !PingHub.running && test == null
+    private fun notifyMode() {
+        val idle = !busy
         if (::terminal.isInitialized) terminal.onModeChanged(idle)
         if (::diagnostic.isInitialized) diagnostic.onModeChanged(idle)
+        if (::condo.isInitialized) condo.onModeChanged(idle)
     }
 
     private fun setStatus(label: String, color: Int) {
@@ -332,8 +346,9 @@ class MainActivity : Activity(), PageHost {
         // ---- abas ----
         terminal = TerminalPage(this, ui, this)
         diagnostic = DiagnosticPage(this, ui, this)
+        condo = CondoPage(this, ui, this)
         val frame = FrameLayout(this)
-        for (page in listOf(terminal.view, diagnostic.view)) {
+        for (page in listOf(terminal.view, diagnostic.view, condo.view)) {
             frame.addView(page, FrameLayout.LayoutParams(-1, -1))
             pages.add(page)
         }
@@ -346,6 +361,7 @@ class MainActivity : Activity(), PageHost {
         }
         nav.addView(navItem(0, NavIconView.TERMINAL, "TERMINAL"), ui.lp(0, -2, 1f))
         nav.addView(navItem(1, NavIconView.DIAGNOSTIC, "DIAGNÓSTICO"), ui.lp(0, -2, 1f))
+        nav.addView(navItem(2, NavIconView.HOUSE, "CONDOMÍNIO"), ui.lp(0, -2, 1f))
         root.addView(View(this).apply { setBackgroundColor(ui.panelStroke) }, ui.lp(-1, ui.dp(1)).apply { topMargin = ui.dp(8) })
         root.addView(nav, ui.lp(-1, -2).apply { topMargin = ui.dp(2) })
     }
@@ -389,7 +405,14 @@ class MainActivity : Activity(), PageHost {
             .setMultiChoiceItems(items, checked) { _, which, isChecked ->
                 val key = if (which == 0) Prefs.KEEP_SCREEN else Prefs.VIBRATE
                 p.edit().putBoolean(key, isChecked).apply()
-                if (which == 0) terminal.applyKeepScreen()
+                if (which == 0) {
+                    if (isChecked) {
+                        terminal.applyKeepScreen()
+                        condo.applyKeepScreen()
+                    } else {
+                        setKeepScreenOn(false)
+                    }
+                }
             }
             .setPositiveButton("OK", null)
             .show()

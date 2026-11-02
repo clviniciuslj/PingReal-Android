@@ -157,6 +157,7 @@ class NavIconView(context: Context, private val kind: Int) : View(context) {
     companion object {
         const val TERMINAL = 0
         const val DIAGNOSTIC = 1
+        const val HOUSE = 2
     }
 
     var activeColor: Int = Color.WHITE
@@ -187,6 +188,26 @@ class NavIconView(context: Context, private val kind: Int) : View(context) {
                 path.lineTo(w * 0.27f, h * 0.64f)
                 canvas.drawPath(path, paint)
                 canvas.drawLine(w * 0.52f, h * 0.65f, w * 0.72f, h * 0.65f, paint)
+            }
+            HOUSE -> {
+                // telhado, paredes e porta
+                path.reset()
+                path.moveTo(w * 0.10f, h * 0.50f)
+                path.lineTo(w * 0.50f, h * 0.14f)
+                path.lineTo(w * 0.90f, h * 0.50f)
+                canvas.drawPath(path, paint)
+                path.reset()
+                path.moveTo(w * 0.22f, h * 0.43f)
+                path.lineTo(w * 0.22f, h * 0.86f)
+                path.lineTo(w * 0.78f, h * 0.86f)
+                path.lineTo(w * 0.78f, h * 0.43f)
+                canvas.drawPath(path, paint)
+                path.reset()
+                path.moveTo(w * 0.42f, h * 0.86f)
+                path.lineTo(w * 0.42f, h * 0.62f)
+                path.lineTo(w * 0.58f, h * 0.62f)
+                path.lineTo(w * 0.58f, h * 0.86f)
+                canvas.drawPath(path, paint)
             }
             else -> {
                 // anel + linha de batimento
