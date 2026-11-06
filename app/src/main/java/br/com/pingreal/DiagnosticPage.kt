@@ -55,9 +55,9 @@ class DiagnosticPage(
         add(buildDiagnosticCard())
         add(buildSpeedCard())
 
-        shareButton = ui.button("ENVIAR RELATÓRIO", Color.TRANSPARENT, ui.white, ui.panelStroke) { showShareDialog() }
+        shareButton = ui.button("Enviar relatório", ui.tint(ui.accent, 30), ui.accent) { showShareDialog() }
         shareButton.visibility = View.GONE
-        content.addView(shareButton, ui.lp(-1, ui.dp(46)).apply { bottomMargin = ui.dp(12) })
+        content.addView(shareButton, ui.lp(-1, ui.dp(50)).apply { bottomMargin = ui.dp(12) })
 
         view = ScrollView(activity).apply {
             isVerticalScrollBarEnabled = false
@@ -70,14 +70,14 @@ class DiagnosticPage(
 
     private fun buildDiagnosticCard(): View {
         val card = ui.card()
-        card.addView(ui.label("DIAGNÓSTICO"))
-        diagButton = ui.button("▶ INICIAR DIAGNÓSTICO", ui.accent, ui.onAccent) {
+        card.addView(ui.label("Diagnóstico"))
+        diagButton = ui.button("Iniciar diagnóstico", ui.accent, ui.onAccent) {
             if (diagRunning) engine?.cancel() else startDiagnostic()
         }
-        card.addView(diagButton, ui.lp(-1, ui.dp(46)).apply { topMargin = ui.dp(10); bottomMargin = ui.dp(6) })
+        card.addView(diagButton, ui.lp(-1, ui.dp(50)).apply { topMargin = ui.dp(10); bottomMargin = ui.dp(6) })
 
         for ((id, title) in DiagnosticEngine.STEP_TITLES) {
-            val glyph = ui.tv("○", 16f, ui.muted, bold = true).apply { gravity = Gravity.CENTER_HORIZONTAL }
+            val glyph = ui.tv("○", 13f, ui.muted, bold = true).apply { gravity = Gravity.CENTER; background = ui.roundRect(ui.tint(ui.muted), 14f) }
             val detail = ui.tv("", 11f, ui.muted).apply { visibility = View.GONE }
             val tip = ui.tv("", 11f, ui.text).apply { visibility = View.GONE }
             val text = LinearLayout(activity).apply {
@@ -88,9 +88,9 @@ class DiagnosticPage(
             }
             val row = LinearLayout(activity).apply {
                 orientation = LinearLayout.HORIZONTAL
-                setPadding(0, ui.dp(6), 0, ui.dp(6))
+                setPadding(0, ui.dp(8), 0, ui.dp(8))
             }
-            row.addView(glyph, ui.lp(ui.dp(26), -2))
+            row.addView(glyph, ui.lp(ui.dp(28), ui.dp(28)).apply { marginEnd = ui.dp(12) })
             row.addView(text, ui.lp(0, -2, 1f))
             card.addView(row, ui.lp(-1, -2))
             rows[id] = Row(glyph, detail, tip)
@@ -100,32 +100,27 @@ class DiagnosticPage(
 
     private fun buildSpeedCard(): View {
         val card = ui.card()
-        card.addView(ui.label("TESTE DE VELOCIDADE"))
+        card.addView(ui.label("Teste de velocidade"))
 
         gauge = GaugeView(activity)
         card.addView(gauge, ui.lp(-1, -2).apply { topMargin = ui.dp(8) })
 
         val results = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
         fun cell(label: String): TextView {
-            val value = ui.tv("—", 14f, ui.white, bold = true, mono = true)
-            val box = LinearLayout(activity).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(ui.tv(label, 9f, ui.muted, bold = true, spacing = 0.08f))
-                addView(value, ui.lp(-2, -2).apply { topMargin = ui.dp(2) })
-            }
-            results.addView(box, ui.lp(0, -2, 1f))
+            val value = ui.tv("—", 15f, ui.white, bold = true, mono = true)
+            results.addView(ui.tile(label, value), ui.lp(0, -2, 1f).apply { if (results.childCount > 0) marginStart = ui.dp(8) })
             return value
         }
-        speedDown = cell("↓ DOWNLOAD")
-        speedUp = cell("↑ UPLOAD")
-        speedPing = cell("PING")
-        speedJitter = cell("JITTER")
+        speedDown = cell("↓ Download")
+        speedUp = cell("↑ Upload")
+        speedPing = cell("Ping")
+        speedJitter = cell("Jitter")
         card.addView(results, ui.lp(-1, -2).apply { topMargin = ui.dp(10) })
 
-        speedButton = ui.button("▶ TESTAR VELOCIDADE", Color.TRANSPARENT, ui.white, ui.panelStroke) {
+        speedButton = ui.button("Testar velocidade", ui.tint(ui.accent, 30), ui.accent) {
             if (speedRunning) speed?.cancel() else confirmSpeed()
         }
-        card.addView(speedButton, ui.lp(-1, ui.dp(46)).apply { topMargin = ui.dp(14) })
+        card.addView(speedButton, ui.lp(-1, ui.dp(50)).apply { topMargin = ui.dp(14) })
         return card
     }
 
@@ -138,19 +133,19 @@ class DiagnosticPage(
 
     private fun refreshButtons() {
         if (diagRunning) {
-            diagButton.text = "■ PARAR"
+            diagButton.text = "Parar"
             ui.danger(diagButton)
         } else {
-            diagButton.text = "▶ INICIAR DIAGNÓSTICO"
+            diagButton.text = "Iniciar diagnóstico"
             ui.primary(diagButton)
         }
         ui.setEnabled(diagButton, diagRunning || idleGlobal)
 
         if (speedRunning) {
-            speedButton.text = "■ PARAR"
+            speedButton.text = "Parar"
             ui.danger(speedButton)
         } else {
-            speedButton.text = "▶ TESTAR VELOCIDADE"
+            speedButton.text = "Testar velocidade"
             ui.secondary(speedButton)
         }
         ui.setEnabled(speedButton, speedRunning || idleGlobal)
@@ -185,6 +180,7 @@ class DiagnosticPage(
         val row = rows[step.id] ?: return
         row.glyph.text = glyph(step.status)
         row.glyph.setTextColor(colorOf(step.status))
+        row.glyph.background = ui.roundRect(ui.tint(colorOf(step.status)), 14f)
         val text = if (step.status == Status.RUNNING) "verificando…" else step.detail
         row.detail.text = text
         row.detail.visibility = if (text.isBlank()) View.GONE else View.VISIBLE
@@ -249,7 +245,7 @@ class DiagnosticPage(
 
     private fun startDiagnostic() {
         if (diagRunning || speedRunning) return
-        if (!host.acquire("DIAGNÓSTICO", ui.white)) return
+        if (!host.acquire("Diagnóstico", ui.accent)) return
 
         diagRunning = true
         refreshButtons()
@@ -311,7 +307,7 @@ class DiagnosticPage(
 
     private fun startSpeed() {
         if (diagRunning || speedRunning) return
-        if (!host.acquire("VELOCIDADE", ui.white)) return
+        if (!host.acquire("Velocidade", ui.accent)) return
 
         speedRunning = true
         refreshButtons()

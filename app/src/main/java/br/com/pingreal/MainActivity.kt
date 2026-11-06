@@ -55,6 +55,9 @@ class MainActivity : Activity(), PageHost {
     private lateinit var nav: LinearLayout
     private lateinit var statusText: TextView
     private lateinit var statusDot: GradientDrawable
+    private lateinit var statusPill: LinearLayout
+    private lateinit var titleView: TextView
+    private val tabItems = ArrayList<LinearLayout>()
     private val pages = ArrayList<View>()
     private val tabIcons = ArrayList<NavIconView>()
     private val tabLabels = ArrayList<TextView>()
@@ -153,7 +156,7 @@ class MainActivity : Activity(), PageHost {
 
     override fun release() {
         busy = false
-        setStatus("PRONTO", ui.muted)
+        setStatus("Pronto", ui.muted)
         notifyMode()
     }
 
@@ -262,6 +265,7 @@ class MainActivity : Activity(), PageHost {
         statusText.text = label
         statusText.setTextColor(color)
         statusDot.setColor(color)
+        statusPill.background = ui.roundRect(ui.tint(color), 20f)
     }
 
     private fun scheduleNetworkRefresh() {
@@ -322,18 +326,30 @@ class MainActivity : Activity(), PageHost {
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(ui.dp(2), 0, 0, ui.dp(8))
+            setPadding(ui.dp(2), ui.dp(4), 0, ui.dp(12))
         }
-        header.addView(ui.tv("REAL PING", 13f, ui.white, bold = true, spacing = 0.18f))
-        header.addView(ui.tv(versionName(), 10f, ui.muted, mono = true).apply { setPadding(ui.dp(8), 0, 0, 0) })
-        header.addView(View(this), ui.lp(0, 1, 1f))
-        statusText = ui.tv("PRONTO", 10f, ui.muted, bold = true, spacing = 0.1f)
+        titleView = ui.tv("Terminal", 26f, ui.white, bold = true)
+        val titleBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(titleView)
+            addView(ui.tv("Real Ping " + versionName(), 11f, ui.muted, mono = true))
+        }
+        header.addView(titleBox)
+                header.addView(View(this), ui.lp(0, 1, 1f))
+        statusText = ui.tv("Pronto", 11f, ui.muted, bold = true)
         statusDot = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
             setColor(ui.muted)
         }
-        header.addView(statusText)
-        header.addView(View(this).apply { background = statusDot }, ui.lp(ui.dp(7), ui.dp(7)).apply { marginStart = ui.dp(7) })
+        statusPill = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(ui.dp(10), ui.dp(5), ui.dp(12), ui.dp(5))
+            background = ui.roundRect(ui.tint(ui.muted), 20f)
+        }
+        statusPill.addView(View(this).apply { background = statusDot }, ui.lp(ui.dp(7), ui.dp(7)).apply { marginEnd = ui.dp(7) })
+        statusPill.addView(statusText)
+        header.addView(statusPill)
         header.addView(
             ui.tv("⋮", 18f, ui.muted, bold = true).apply {
                 gravity = Gravity.CENTER
@@ -360,25 +376,27 @@ class MainActivity : Activity(), PageHost {
         // ---- barra de abas ----
         nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(ui.dp(4), ui.dp(2), ui.dp(4), ui.dp(2))
+            background = ui.roundRect(ui.panel, 26f, if (Palette.isDark) ui.panelStroke else 0)
+            if (!Palette.isDark) elevation = ui.dpf(3f)
+            setPadding(ui.dp(6), ui.dp(6), ui.dp(6), ui.dp(6))
         }
-        nav.addView(navItem(0, NavIconView.TERMINAL, "TERMINAL"), ui.lp(0, -2, 1f))
-        nav.addView(navItem(1, NavIconView.DIAGNOSTIC, "DIAGNÓSTICO"), ui.lp(0, -2, 1f))
-        nav.addView(navItem(2, NavIconView.HOUSE, "CONDOMÍNIO"), ui.lp(0, -2, 1f))
-        root.addView(View(this).apply { setBackgroundColor(ui.panelStroke) }, ui.lp(-1, ui.dp(1)).apply { topMargin = ui.dp(8) })
-        root.addView(nav, ui.lp(-1, -2).apply { topMargin = ui.dp(2) })
+        nav.addView(navItem(0, NavIconView.TERMINAL, "Terminal"), ui.lp(0, -2, 1f))
+        nav.addView(navItem(1, NavIconView.DIAGNOSTIC, "Diagnóstico"), ui.lp(0, -2, 1f))
+        nav.addView(navItem(2, NavIconView.HOUSE, "Condomínio"), ui.lp(0, -2, 1f))
+        root.addView(nav, ui.lp(-1, -2).apply { topMargin = ui.dp(10) })
     }
 
     private fun navItem(index: Int, kind: Int, label: String): LinearLayout {
         val icon = NavIconView(this, kind)
-        val text = ui.tv(label, 9f, ui.muted, bold = true, spacing = 0.08f).apply { gravity = Gravity.CENTER }
+        val text = ui.tv(label, 11f, ui.muted, bold = true).apply { gravity = Gravity.CENTER }
         tabIcons.add(icon)
         tabLabels.add(text)
-        return LinearLayout(this).apply {
+        val item = LinearLayout(this)
+        tabItems.add(item)
+        return item.apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(0, ui.dp(6), 0, ui.dp(6))
-            background = ui.rippled(Color.TRANSPARENT, 8f)
+            setPadding(0, ui.dp(8), 0, ui.dp(8))
             isClickable = true
             addView(icon, ui.lp(ui.dp(24), ui.dp(24)))
             addView(text, ui.lp(-2, -2).apply { topMargin = ui.dp(2) })
@@ -389,10 +407,12 @@ class MainActivity : Activity(), PageHost {
     private fun selectTab(index: Int) {
         for ((i, page) in pages.withIndex()) page.visibility = if (i == index) View.VISIBLE else View.GONE
         for (i in tabIcons.indices) {
-            val color = if (i == index) ui.white else ui.muted
+            val color = if (i == index) ui.accent else ui.muted
+            tabItems[i].background = if (i == index) ui.rippled(ui.tint(ui.accent, 34), 16f) else ui.rippled(Color.TRANSPARENT, 16f)
             tabIcons[i].activeColor = color
             tabLabels[i].setTextColor(color)
         }
+        titleView.text = listOf("Terminal", "Diagnóstico", "Condomínio")[index]
         if (index != 0) terminal.hideKeyboard()
     }
 

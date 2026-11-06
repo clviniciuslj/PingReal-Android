@@ -246,20 +246,15 @@ class CondoPage(
         // ---- resumo ----
         val summary = ui.card()
         fun stat(label: String, big: Boolean = true): Pair<LinearLayout, TextView> {
-            val value = ui.tv("0", 15f, ui.white, bold = true, mono = true).apply { maxLines = 1 }
-            val cell = LinearLayout(activity).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(ui.tv(label, 9f, ui.muted, bold = true, spacing = 0.06f))
-                addView(value, ui.lp(-2, -2).apply { topMargin = ui.dp(1) })
-            }
-            return cell to value
+            val value = ui.tv("0", 16f, ui.white, bold = true, mono = true).apply { maxLines = 1 }
+            return ui.tile(label, value) to value
         }
-        val (totalCell, totalValue) = stat("TOTAL")
-        val (respondingCell, respondingValue) = stat("RESPONDENDO")
-        val (noResponseCell, noResponseValue) = stat("SEM RESPOSTA")
-        val (sentCell, sentValue) = stat("ENVIADOS")
-        val (receivedCell, receivedValue) = stat("RECEBIDOS")
-        val (lossCell, lossValue) = stat("PERDA")
+        val (totalCell, totalValue) = stat("Total")
+        val (respondingCell, respondingValue) = stat("Respondendo")
+        val (noResponseCell, noResponseValue) = stat("Sem resposta")
+        val (sentCell, sentValue) = stat("Enviados")
+        val (receivedCell, receivedValue) = stat("Recebidos")
+        val (lossCell, lossValue) = stat("Perda")
         statTotal = totalValue
         statResponding = respondingValue
         statNoResponse = noResponseValue
@@ -268,9 +263,9 @@ class CondoPage(
         statLoss = lossValue
 
         val firstRow = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
-        for (cell in listOf(totalCell, respondingCell, noResponseCell)) firstRow.addView(cell, ui.lp(0, -2, 1f))
+        for ((i, cell) in listOf(totalCell, respondingCell, noResponseCell).withIndex()) firstRow.addView(cell, ui.lp(0, -2, 1f).apply { if (i > 0) marginStart = ui.dp(8) })
         val secondRow = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
-        for (cell in listOf(sentCell, receivedCell, lossCell)) secondRow.addView(cell, ui.lp(0, -2, 1f))
+        for ((i, cell) in listOf(sentCell, receivedCell, lossCell).withIndex()) secondRow.addView(cell, ui.lp(0, -2, 1f).apply { if (i > 0) marginStart = ui.dp(8) })
         summary.addView(firstRow, ui.lp(-1, -2))
         summary.addView(secondRow, ui.lp(-1, -2).apply { topMargin = ui.dp(8) })
         view.addView(summary, ui.lp(-1, -2))
@@ -278,16 +273,16 @@ class CondoPage(
         // ---- ações ----
         val actions = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, ui.dp(10), 0, ui.dp(8))
+            setPadding(0, ui.dp(12), 0, ui.dp(10))
         }
-        pingAllButton = ui.button("▶ PINGAR TUDO", ui.accent, ui.onAccent) { toggleMonitoring() }
-        val addButton = ui.button("+ CADASTRAR", Color.TRANSPARENT, ui.white, ui.panelStroke) { showOnuDialog(null) }
-        val importButton = ui.button("IMPORTAR", Color.TRANSPARENT, ui.white, ui.panelStroke) {
+        pingAllButton = ui.button("Pingar tudo", ui.accent, ui.onAccent) { toggleMonitoring() }
+        val addButton = ui.button("Cadastrar", ui.tint(ui.accent, 30), ui.accent) { showOnuDialog(null) }
+        val importButton = ui.button("Importar", ui.tint(ui.accent, 30), ui.accent) {
             host.pickTextFile { text -> importText(text) }
         }
-        actions.addView(pingAllButton, ui.lp(0, ui.dp(44), 1.5f))
-        actions.addView(addButton, ui.lp(0, ui.dp(44), 1.2f).apply { marginStart = ui.dp(8) })
-        actions.addView(importButton, ui.lp(0, ui.dp(44), 1f).apply { marginStart = ui.dp(8) })
+        actions.addView(pingAllButton, ui.lp(0, ui.dp(48), 1.5f))
+        actions.addView(addButton, ui.lp(0, ui.dp(48), 1.2f).apply { marginStart = ui.dp(8) })
+        actions.addView(importButton, ui.lp(0, ui.dp(48), 1f).apply { marginStart = ui.dp(8) })
         view.addView(actions, ui.lp(-1, -2))
 
         // ---- busca e filtros ----
@@ -301,8 +296,8 @@ class CondoPage(
             setTextColor(ui.white)
             setHintTextColor(ui.muted)
             hint = "Buscar por IP ou identificação"
-            background = ui.roundRect(ui.panel, 8f, ui.panelStroke)
-            setPadding(ui.dp(12), 0, ui.dp(12), 0)
+            background = ui.field()
+            setPadding(ui.dp(16), 0, ui.dp(16), 0)
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             addTextChangedListener(object : TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -314,15 +309,15 @@ class CondoPage(
                 }
             })
         }
-        filters.addView(searchInput, ui.lp(0, ui.dp(40), 1f))
-        errorsToggle = filterAction("ERROS") {
+        filters.addView(searchInput, ui.lp(0, ui.dp(46), 1f))
+        errorsToggle = filterAction("Erros") {
             onlyErrors = !onlyErrors
             styleErrorsToggle()
             filterChanged()
         }
-        filters.addView(errorsToggle, ui.lp(-2, ui.dp(40)).apply { marginStart = ui.dp(6) })
-        filters.addView(filterAction("⊞") { setAllExpanded(true) }, ui.lp(ui.dp(40), ui.dp(40)).apply { marginStart = ui.dp(6) })
-        filters.addView(filterAction("⊟") { setAllExpanded(false) }, ui.lp(ui.dp(40), ui.dp(40)).apply { marginStart = ui.dp(6) })
+        filters.addView(errorsToggle, ui.lp(-2, ui.dp(46)).apply { marginStart = ui.dp(6) })
+        filters.addView(filterAction("⊞") { setAllExpanded(true) }, ui.lp(ui.dp(46), ui.dp(46)).apply { marginStart = ui.dp(6) })
+        filters.addView(filterAction("⊟") { setAllExpanded(false) }, ui.lp(ui.dp(46), ui.dp(46)).apply { marginStart = ui.dp(6) })
         view.addView(filters, ui.lp(-1, -2))
         styleErrorsToggle()
 
@@ -337,7 +332,7 @@ class CondoPage(
         // ---- console ----
         val consoleCard = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            background = ui.roundRect(ui.consoleBg, 10f, ui.panelStroke)
+            background = ui.roundRect(ui.consoleBg, 20f, ui.panelStroke)
             setPadding(ui.dp(4), ui.dp(2), ui.dp(4), ui.dp(4))
         }
         val consoleHeader = LinearLayout(activity).apply {
@@ -345,16 +340,16 @@ class CondoPage(
             gravity = Gravity.CENTER_VERTICAL
             setPadding(ui.dp(6), 0, 0, 0)
         }
-        consoleToggle = ui.tv("▾ CONSOLE", 11f, ui.muted, bold = true, spacing = 0.1f).apply {
+        consoleToggle = ui.tv("▾ Console", 13f, ui.muted, bold = true).apply {
             setPadding(ui.dp(4), ui.dp(8), ui.dp(8), ui.dp(8))
             isClickable = true
             setOnClickListener { setConsoleOpen(!consoleOpen) }
         }
         consoleHeader.addView(consoleToggle, ui.lp(0, -2, 1f))
-        consoleFilterAction = ui.textAction("TODAS") { showConsoleFilterDialog() }
+        consoleFilterAction = ui.textAction("Todas") { showConsoleFilterDialog() }
         consoleHeader.addView(consoleFilterAction)
-        consoleHeader.addView(ui.textAction("LIMPAR") { clearConsole() })
-        consoleHeader.addView(ui.textAction("COPIAR") { copyConsole() })
+        consoleHeader.addView(ui.textAction("Limpar") { clearConsole() })
+        consoleHeader.addView(ui.textAction("Copiar") { copyConsole() })
         consoleCard.addView(consoleHeader, ui.lp(-1, -2))
 
         consoleBody = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
@@ -370,32 +365,32 @@ class CondoPage(
     }
 
     private fun filterAction(label: String, onClick: () -> Unit): TextView =
-        ui.tv(label, 11f, ui.muted, bold = true, spacing = 0.06f).apply {
+        ui.tv(label, 13f, ui.muted, bold = true).apply {
             gravity = Gravity.CENTER
-            setPadding(ui.dp(10), 0, ui.dp(10), 0)
-            background = ui.rippled(ui.panel, 8f, ui.panelStroke)
+            setPadding(ui.dp(14), 0, ui.dp(14), 0)
+            background = ui.rippled(ui.tint(ui.muted, 28), 14f)
             isClickable = true
             setOnClickListener { onClick() }
         }
 
     private fun styleErrorsToggle() {
         errorsToggle.setTextColor(if (onlyErrors) ui.red else ui.muted)
-        errorsToggle.background = ui.rippled(ui.panel, 8f, if (onlyErrors) ui.red else ui.panelStroke)
+        errorsToggle.background = ui.rippled(if (onlyErrors) ui.tint(ui.red, 40) else ui.tint(ui.muted, 28), 14f)
     }
 
     private fun updateControls() {
         val canStart = monitoring.isRunning || idleGlobal || busyHeld
         if (monitoring.isRunning) {
-            pingAllButton.text = "■ PARAR"
+            pingAllButton.text = "Parar"
             ui.danger(pingAllButton)
         } else {
-            pingAllButton.text = "▶ PINGAR TUDO"
+            pingAllButton.text = "Pingar tudo"
             ui.primary(pingAllButton)
         }
         ui.setEnabled(pingAllButton, canStart)
         for ((quadra, gv) in groupViews) {
             val gs = groups[quadra] ?: continue
-            gv.button.text = if (gs.pinging) "■ Cancelar" else "▶ Pingar quadra"
+            gv.button.text = if (gs.pinging) "Cancelar" else "Pingar quadra"
             if (gs.pinging) ui.danger(gv.button) else ui.secondary(gv.button)
             ui.setEnabled(gv.button, gs.pinging || canStart)
         }
@@ -539,7 +534,7 @@ class CondoPage(
             setOnClickListener { showFailureDialog(quadra) }
         }
         val summary = ui.tv("", 11f, ui.muted).apply { setPadding(ui.dp(18), ui.dp(2), 0, 0) }
-        val button = ui.button("▶ Pingar quadra", Color.TRANSPARENT, ui.white, ui.panelStroke) { toggleQuadraPing(quadra) }
+        val button = ui.button("Pingar quadra", ui.tint(ui.accent, 30), ui.accent) { toggleQuadraPing(quadra) }
         val rowsBox = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             visibility = if (gs.expanded) View.VISIBLE else View.GONE
@@ -732,7 +727,7 @@ class CondoPage(
 
     private fun acquireBusy(): Boolean {
         if (busyHeld) return true
-        if (!host.acquire("CONDOMÍNIO", ui.green)) {
+        if (!host.acquire("Condomínio", ui.accent)) {
             Toast.makeText(activity, "Já existe um teste em andamento.", Toast.LENGTH_SHORT).show()
             return false
         }
@@ -929,7 +924,7 @@ class CondoPage(
     private fun setConsoleOpen(open: Boolean) {
         consoleOpen = open
         consoleBody.visibility = if (open) View.VISIBLE else View.GONE
-        consoleToggle.text = if (open) "▾ CONSOLE" else "▸ CONSOLE"
+        consoleToggle.text = if (open) "▾ Console" else "▸ Console"
         if (open) {
             pendingChunk.clear()
             consoleOutput.text = consoleBuffer

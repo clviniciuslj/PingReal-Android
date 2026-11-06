@@ -93,19 +93,25 @@ class UiKit(private val context: Context) {
     }
 
     /** Rótulo de seção (cinza, maiúsculas espaçadas). */
-    fun label(text: String): TextView = tv(text, 11f, muted, bold = true, spacing = 0.1f)
+    fun label(text: String): TextView =
+        tv(text.lowercase(Locale("pt", "BR")).replaceFirstChar { it.uppercase() }, 13f, muted, bold = true)
+
+    /** Cor translúcida para fundos de selos e indicadores. */
+    fun tint(color: Int, alpha: Int = 36): Int =
+        Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color))
 
     fun card(): LinearLayout = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
-        background = roundRect(panel, 10f, panelStroke)
-        setPadding(dp(14), dp(12), dp(14), dp(12))
+        background = roundRect(panel, 20f, if (Palette.isDark) panelStroke else 0)
+        if (!Palette.isDark) elevation = dpf(2f)
+        setPadding(dp(18), dp(16), dp(18), dp(16))
     }
 
     fun button(label: String, fill: Int, textColor: Int, stroke: Int = 0, onClick: () -> Unit): Button =
         Button(context).apply {
             text = label
             isAllCaps = false
-            textSize = 12f
+            textSize = 14f
             typeface = Typeface.DEFAULT_BOLD
             stateListAnimator = null
             minWidth = 0
@@ -120,17 +126,29 @@ class UiKit(private val context: Context) {
     /** Troca as cores de um botão já criado (ex.: INICIAR ↔ PARAR). */
     fun style(button: Button, fill: Int, textColor: Int, stroke: Int = 0) {
         button.setTextColor(textColor)
-        button.background = rippled(fill, 8f, stroke)
+        button.background = rippled(fill, 14f, stroke)
     }
 
     /** Botão principal (preenchido em azul). */
     fun primary(button: Button) = style(button, accent, onAccent)
 
     /** Botão de parar (contorno, texto vermelho). */
-    fun danger(button: Button) = style(button, Color.TRANSPARENT, red, panelStroke)
+    fun danger(button: Button) = style(button, tint(red, 34), red)
 
     /** Botão secundário (contorno, texto claro). */
-    fun secondary(button: Button) = style(button, Color.TRANSPARENT, white, panelStroke)
+    fun secondary(button: Button) = style(button, tint(accent, 30), accent)
+
+    /** Fundo de campos de texto. */
+    fun field(): GradientDrawable = roundRect(panel, 14f, panelStroke)
+
+    /** Bloco com rótulo pequeno e um valor grande (estatísticas). */
+    fun tile(label: String, value: TextView): LinearLayout = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        background = roundRect(tint(muted, 24), 12f)
+        setPadding(dp(12), dp(9), dp(12), dp(9))
+        addView(tv(label, 11f, muted))
+        addView(value, lp(-2, -2).apply { topMargin = dp(2) })
+    }
 
     fun setEnabled(view: View, enabled: Boolean) {
         view.isEnabled = enabled
@@ -139,10 +157,10 @@ class UiKit(private val context: Context) {
 
     /** Ação de texto pequena (ex.: ENVIAR, LIMPAR). */
     fun textAction(label: String, onClick: () -> Unit): TextView =
-        tv(label, 11f, muted, bold = true, spacing = 0.08f).apply {
+        tv(label, 12f, accent, bold = true).apply {
             gravity = Gravity.CENTER
-            setPadding(dp(10), dp(6), dp(10), dp(6))
-            background = rippled(Color.TRANSPARENT, 6f)
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            background = rippled(Color.TRANSPARENT, 10f)
             isClickable = true
             setOnClickListener { onClick() }
         }

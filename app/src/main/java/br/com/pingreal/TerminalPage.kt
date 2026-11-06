@@ -217,8 +217,8 @@ class TerminalPage(
             setHintTextColor(ui.muted)
             hint = "IP ou host  (vários: 8.8.8.8, 1.1.1.1)"
             typeface = Typeface.MONOSPACE
-            background = ui.roundRect(ui.panel, 8f, ui.panelStroke)
-            setPadding(ui.dp(14), 0, ui.dp(14), 0)
+            background = ui.field()
+            setPadding(ui.dp(16), 0, ui.dp(16), 0)
             inputType = InputType.TYPE_CLASS_TEXT or
                 InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
                 InputType.TYPE_TEXT_VARIATION_URI
@@ -239,13 +239,13 @@ class TerminalPage(
         }
         favButton = ui.tv("☆", 22f, ui.muted).apply {
             gravity = Gravity.CENTER
-            background = ui.rippled(ui.panel, 8f, ui.panelStroke)
+            background = ui.rippled(ui.panel, 14f, ui.panelStroke)
             isClickable = true
             contentDescription = "Favoritar"
             setOnClickListener { toggleFavorite() }
         }
-        inputRow.addView(hostInput, ui.lp(0, ui.dp(50), 1f))
-        inputRow.addView(favButton, ui.lp(ui.dp(50), ui.dp(50)).apply { marginStart = ui.dp(8) })
+        inputRow.addView(hostInput, ui.lp(0, ui.dp(52), 1f))
+        inputRow.addView(favButton, ui.lp(ui.dp(52), ui.dp(52)).apply { marginStart = ui.dp(8) })
         view.addView(inputRow, ui.lp(-1, -2))
 
         // ---- atalhos (gateway, DNS, favoritos, recentes) ----
@@ -258,17 +258,17 @@ class TerminalPage(
             overScrollMode = View.OVER_SCROLL_NEVER
             addView(chipsRow, ViewGroup.LayoutParams(-2, -2))
         }
-        view.addView(chipsScroll, ui.lp(-1, -2).apply { topMargin = ui.dp(8) })
+        view.addView(chipsScroll, ui.lp(-1, -2).apply { topMargin = ui.dp(10) })
 
         // ---- botões: INICIAR vira PARAR enquanto pinga; TRACEROUTE vira PARAR enquanto rastreia ----
         val buttons = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, ui.dp(10), 0, ui.dp(10))
+            setPadding(0, ui.dp(12), 0, ui.dp(12))
         }
-        runButton = ui.button("▶ INICIAR", ui.accent, ui.onAccent) {
+        runButton = ui.button("Iniciar", ui.accent, ui.onAccent) {
             if (run == Run.PING) stopRun() else startPing()
         }
-        traceButton = ui.button("TRACEROUTE", ui.accent, ui.onAccent) {
+        traceButton = ui.button("Traceroute", ui.accent, ui.onAccent) {
             if (run == Run.TRACE) stopRun() else startTraceRoute()
         }
         // Toque longo: mostra a linha crua que o ping devolveu em cada salto (para depurar o formato).
@@ -283,8 +283,8 @@ class TerminalPage(
             }
             true
         }
-        buttons.addView(runButton, ui.lp(0, ui.dp(46), 1f))
-        buttons.addView(traceButton, ui.lp(0, ui.dp(46), 1f).apply { marginStart = ui.dp(8) })
+        buttons.addView(runButton, ui.lp(0, ui.dp(52), 1f))
+        buttons.addView(traceButton, ui.lp(0, ui.dp(52), 1f).apply { marginStart = ui.dp(8) })
         view.addView(buttons, ui.lp(-1, -2))
 
         // ---- gráfico ----
@@ -293,37 +293,41 @@ class TerminalPage(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        chartSubtitle = ui.tv("últimos 60 s", 10f, ui.muted).apply { setPadding(0, ui.dp(1), 0, 0) }
+        chartSubtitle = ui.tv("últimos 60 s", 11f, ui.muted).apply { setPadding(0, ui.dp(1), 0, 0) }
         val chartTitle = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            addView(ui.label("LATÊNCIA"))
+            addView(ui.label("Latência"))
             addView(chartSubtitle)
         }
-        latencyNow = ui.tv("— ms", 24f, ui.white, bold = true, mono = true)
+        latencyNow = ui.tv("— ms", 30f, ui.white, bold = true, mono = true)
         chartHeader.addView(chartTitle, ui.lp(0, -2, 1f))
         chartHeader.addView(latencyNow)
         chartCard.addView(chartHeader, ui.lp(-1, -2))
 
         chart = LatencyChartView(activity)
-        chartCard.addView(chart, ui.lp(-1, ui.dp(115)).apply { topMargin = ui.dp(6); bottomMargin = ui.dp(8) })
+        chartCard.addView(chart, ui.lp(-1, ui.dp(125)).apply { topMargin = ui.dp(8); bottomMargin = ui.dp(12) })
 
-        singleStats = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+        singleStats = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        val statRows = listOf(
+            LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL },
+            LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+        )
+        singleStats.addView(statRows[0], ui.lp(-1, -2))
+        singleStats.addView(statRows[1], ui.lp(-1, -2).apply { topMargin = ui.dp(8) })
+        var statIndex = 0
         fun statCell(label: String): TextView {
-            val value = ui.tv(DASH, 12f, ui.white, bold = true, mono = true).apply { maxLines = 1 }
-            val cell = LinearLayout(activity).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(ui.tv(label, 9f, ui.muted, bold = true, spacing = 0.06f))
-                addView(value, ui.lp(-2, -2).apply { topMargin = ui.dp(2) })
-            }
-            singleStats.addView(cell, ui.lp(0, -2, 1f))
+            val value = ui.tv(DASH, 14f, ui.white, bold = true, mono = true).apply { maxLines = 1 }
+            val row = statRows[statIndex / 3]
+            row.addView(ui.tile(label, value), ui.lp(0, -2, 1f).apply { if (statIndex % 3 > 0) marginStart = ui.dp(8) })
+            statIndex++
             return value
         }
-        statMin = statCell("MÍN")
-        statAvg = statCell("MÉD")
-        statMax = statCell("MÁX")
-        statJitter = statCell("JITTER")
-        statLoss = statCell("PERDA")
-        statOutages = statCell("QUEDAS")
+        statMin = statCell("Mín")
+        statAvg = statCell("Média")
+        statMax = statCell("Máx")
+        statJitter = statCell("Jitter")
+        statLoss = statCell("Perda")
+        statOutages = statCell("Quedas")
         chartCard.addView(singleStats, ui.lp(-1, -2))
 
         multiBox = LinearLayout(activity).apply {
@@ -335,17 +339,17 @@ class TerminalPage(
         // ---- console ----
         val consoleCard = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            background = ui.roundRect(ui.consoleBg, 10f, ui.panelStroke)
-            setPadding(ui.dp(4), ui.dp(4), ui.dp(4), ui.dp(8))
+            background = ui.roundRect(ui.consoleBg, 20f, ui.panelStroke)
+            setPadding(ui.dp(8), ui.dp(8), ui.dp(8), ui.dp(12))
         }
         val consoleHeader = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(ui.dp(10), 0, 0, 0)
+            setPadding(ui.dp(12), 0, 0, 0)
         }
-        consoleHeader.addView(ui.label("CONSOLE"), ui.lp(0, -2, 1f))
-        consoleHeader.addView(ui.textAction("ENVIAR") { showShareDialog() })
-        consoleHeader.addView(ui.textAction("LIMPAR") { clearConsole() })
+        consoleHeader.addView(ui.label("Console"), ui.lp(0, -2, 1f))
+        consoleHeader.addView(ui.textAction("Enviar") { showShareDialog() })
+        consoleHeader.addView(ui.textAction("Limpar") { clearConsole() })
         consoleCard.addView(consoleHeader, ui.lp(-1, -2))
 
         scroll = ScrollView(activity).apply { isFillViewport = true }
@@ -371,26 +375,26 @@ class TerminalPage(
     private fun refreshButtons() {
         when (run) {
             Run.PING -> {
-                runButton.text = "■ PARAR"
+                runButton.text = "Parar"
                 ui.danger(runButton)
                 ui.setEnabled(runButton, true)
-                traceButton.text = "TRACEROUTE"
+                traceButton.text = "Traceroute"
                 ui.primary(traceButton)
                 ui.setEnabled(traceButton, false)
             }
             Run.TRACE -> {
-                runButton.text = "▶ INICIAR"
+                runButton.text = "Iniciar"
                 ui.primary(runButton)
                 ui.setEnabled(runButton, false)
-                traceButton.text = "■ PARAR"
+                traceButton.text = "Parar"
                 ui.danger(traceButton)
                 ui.setEnabled(traceButton, true)
             }
             Run.IDLE -> {
-                runButton.text = "▶ INICIAR"
+                runButton.text = "Iniciar"
                 ui.primary(runButton)
                 ui.setEnabled(runButton, idleGlobal)
-                traceButton.text = "TRACEROUTE"
+                traceButton.text = "Traceroute"
                 ui.primary(traceButton)
                 ui.setEnabled(traceButton, idleGlobal)
             }
@@ -437,9 +441,9 @@ class TerminalPage(
 
         val header = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
         header.addView(View(activity), ui.lp(0, 1, 1f))
-        for ((text, width) in listOf("ATUAL" to 56, "MÉD" to 56, "PERDA" to 44)) {
+        for ((text, width) in listOf("Atual" to 56, "Méd" to 56, "Perda" to 44)) {
             header.addView(
-                ui.tv(text, 9f, ui.muted, bold = true, spacing = 0.08f).apply { gravity = Gravity.END },
+                ui.tv(text, 10f, ui.muted, bold = true).apply { gravity = Gravity.END },
                 ui.lp(ui.dp(width), -2)
             )
         }
@@ -566,10 +570,10 @@ class TerminalPage(
     }
 
     private fun chip(label: String, color: Int, onClick: () -> Unit, onLongClick: (() -> Unit)? = null): TextView =
-        ui.tv(label, 11f, color, mono = true).apply {
+        ui.tv(label, 12f, color, mono = true).apply {
             maxLines = 1
-            setPadding(ui.dp(11), ui.dp(6), ui.dp(11), ui.dp(6))
-            background = ui.rippled(ui.panel, 8f, ui.panelStroke)
+            setPadding(ui.dp(14), ui.dp(8), ui.dp(14), ui.dp(8))
+            background = ui.rippled(ui.tint(ui.muted, 30), 18f)
             isClickable = true
             setOnClickListener { onClick() }
             if (onLongClick != null) setOnLongClickListener { onLongClick(); true }
@@ -752,7 +756,7 @@ class TerminalPage(
         val targets = ArrayList<Target>()
         for (segment in segments) targets.add(parseSegment(segment) ?: return)
 
-        if (!host.acquire("PING ATIVO", ui.green)) return
+        if (!host.acquire("Ping ativo", ui.green)) return
 
         host.prefs().edit().putString(Prefs.HOST, raw).apply()
         addHistory(raw)
@@ -926,7 +930,7 @@ class TerminalPage(
             append("Informe um IP ou hostname válido para o traceroute.", ui.amber)
             return
         }
-        if (!host.acquire("TRACEROUTE", ui.amber)) return
+        if (!host.acquire("Traceroute", ui.amber)) return
 
         host.prefs().edit().putString(Prefs.HOST, target).apply()
         hideKeyboard()
