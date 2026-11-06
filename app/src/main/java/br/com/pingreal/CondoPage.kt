@@ -280,7 +280,7 @@ class CondoPage(
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, ui.dp(10), 0, ui.dp(8))
         }
-        pingAllButton = ui.button("▶ PINGAR TUDO", ui.green, ui.onGreen) { toggleMonitoring() }
+        pingAllButton = ui.button("▶ PINGAR TUDO", ui.accent, ui.onAccent) { toggleMonitoring() }
         val addButton = ui.button("+ CADASTRAR", Color.TRANSPARENT, ui.white, ui.panelStroke) { showOnuDialog(null) }
         val importButton = ui.button("IMPORTAR", Color.TRANSPARENT, ui.white, ui.panelStroke) {
             host.pickTextFile { text -> importText(text) }

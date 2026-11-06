@@ -52,9 +52,9 @@ class LatencyChartView(context: Context) : View(context) {
         // A linha anda poucos pixels por segundo: 30 quadros/s ficam iguais a 60/120 e gastam menos bateria.
         private const val FRAME_MS = 33L
 
-        private val GOOD = Color.rgb(111, 207, 151)
-        private val WARN = Color.rgb(229, 180, 84)
-        private val BAD = Color.rgb(229, 115, 115)
+        private val GOOD get() = Palette.green
+        private val WARN get() = Palette.amber
+        private val BAD get() = Palette.red
 
         private val SCALE_STEPS = floatArrayOf(
             20f, 30f, 50f, 80f, 100f, 150f, 200f, 300f, 500f, 800f, 1000f, 2000f, 5000f
@@ -88,16 +88,16 @@ class LatencyChartView(context: Context) : View(context) {
     private val frameTick = Runnable { invalidate() }
 
     private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(16, 255, 255, 255)
+        color = Palette.overlay(22)
         strokeWidth = dp(1f)
         style = Paint.Style.STROKE
     }
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(105, 200, 205, 210)
+        color = Palette.muted
         textSize = dp(9f)
     }
     private val emptyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(120, 200, 205, 210)
+        color = Palette.muted
         textSize = dp(12f)
         textAlign = Paint.Align.CENTER
     }
@@ -161,7 +161,7 @@ class LatencyChartView(context: Context) : View(context) {
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         fillPaint.shader = LinearGradient(
             0f, dp(10f), 0f, h - dp(12f),
-            Color.argb(40, 111, 207, 151), Color.argb(0, 111, 207, 151),
+            Color.argb(40, Color.red(Palette.green), Color.green(Palette.green), Color.blue(Palette.green)), Color.argb(0, Color.red(Palette.green), Color.green(Palette.green), Color.blue(Palette.green)),
             Shader.TileMode.CLAMP
         )
     }

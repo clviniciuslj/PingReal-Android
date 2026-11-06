@@ -21,7 +21,7 @@ class DiagnosticPage(
     private val ui: UiKit,
     private val host: PageHost
 ) {
-    private class Row(val glyph: TextView, val detail: TextView)
+    private class Row(val glyph: TextView, val detail: TextView, val tip: TextView)
 
     val view: View
 
@@ -71,7 +71,7 @@ class DiagnosticPage(
     private fun buildDiagnosticCard(): View {
         val card = ui.card()
         card.addView(ui.label("DIAGNÓSTICO"))
-        diagButton = ui.button("▶ INICIAR DIAGNÓSTICO", ui.green, ui.onGreen) {
+        diagButton = ui.button("▶ INICIAR DIAGNÓSTICO", ui.accent, ui.onAccent) {
             if (diagRunning) engine?.cancel() else startDiagnostic()
         }
         card.addView(diagButton, ui.lp(-1, ui.dp(46)).apply { topMargin = ui.dp(10); bottomMargin = ui.dp(6) })
@@ -79,10 +79,12 @@ class DiagnosticPage(
         for ((id, title) in DiagnosticEngine.STEP_TITLES) {
             val glyph = ui.tv("○", 16f, ui.muted, bold = true).apply { gravity = Gravity.CENTER_HORIZONTAL }
             val detail = ui.tv("", 11f, ui.muted).apply { visibility = View.GONE }
+            val tip = ui.tv("", 11f, ui.text).apply { visibility = View.GONE }
             val text = LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
                 addView(ui.tv(title, 13f, ui.white, bold = true))
                 addView(detail, ui.lp(-1, -2).apply { topMargin = ui.dp(1) })
+                addView(tip, ui.lp(-1, -2).apply { topMargin = ui.dp(4) })
             }
             val row = LinearLayout(activity).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -91,7 +93,7 @@ class DiagnosticPage(
             row.addView(glyph, ui.lp(ui.dp(26), -2))
             row.addView(text, ui.lp(0, -2, 1f))
             card.addView(row, ui.lp(-1, -2))
-            rows[id] = Row(glyph, detail)
+            rows[id] = Row(glyph, detail, tip)
         }
         return card
     }
@@ -186,6 +188,9 @@ class DiagnosticPage(
         val text = if (step.status == Status.RUNNING) "verificando…" else step.detail
         row.detail.text = text
         row.detail.visibility = if (text.isBlank()) View.GONE else View.VISIBLE
+        val tip = tipFor(step)
+        row.tip.text = if (tip == null) "" else "→ $tip"
+        row.tip.visibility = if (tip == null) View.GONE else View.VISIBLE
         row.detail.setTextColor(
             when (step.status) {
                 Status.WARN -> ui.amber
@@ -193,6 +198,49 @@ class DiagnosticPage(
                 else -> ui.muted
             }
         )
+    }
+
+    private fun tipFor(step: StepOutcome): String? {
+        if (step.status != Status.FAIL && step.status != Status.WARN) return null
+        val d = step.detail
+        return when (step.id) {
+            "link" -> when {
+                d.contains("portal", true) -> "A rede exige login: abra o navegador e autentique."
+                d.contains("sem internet", true) -> "O Android considera esta rede sem internet: o problema costuma estar depois do roteador (ONU/provedor). Veja as etapas abaixo."
+                d.contains("móveis", true) -> "Está em dados móveis, não na rede do cliente. Conecte ao Wi-Fi para testar a rede dele."
+                step.status == Status.WARN -> "Sinal fraco: aproxime-se do roteador ou use a banda de 2,4 GHz, que tem mais alcance."
+                d.contains("avião", true) -> "Desligue o modo avião."
+                else -> "Ligue o Wi-Fi ou os dados móveis. Se for Wi-Fi, confira se o aparelho está conectado à rede certa e se o cabo do roteador/ONU está firme."
+            }
+            "ip" -> when {
+                d.contains("autoatribu", true) -> "O servidor DHCP não respondeu. Reinicie o roteador, confira se o cabo da ONU/WAN está ligado e se há outro servidor DHCP na rede."
+                else -> "Esqueça a rede e conecte de novo. Se continuar, o DHCP do roteador pode estar desligado ou com a faixa de IPs esgotada."
+            }
+            "gw" -> if (step.status == Status.WARN) {
+                "Respostas lentas ou com perda até o roteador: indica Wi-Fi ruim, cabo defeituoso ou roteador sobrecarregado."
+            } else {
+                "O roteador não responde ao ping. Ele pode estar travado (reinicie), o cliente pode estar em outra rede/VLAN, ou o roteador bloqueia ping (o resto dos testes indica isso)."
+            }
+            "inet" -> if (step.status == Status.WARN) {
+                "Há perda de pacotes até a internet. Compare com o roteador: se o roteador está bom, o problema está no link da fibra/ONU ou no provedor."
+            } else {
+                "Rede local ok e sem internet: confira o sinal óptico da ONU (LOS vermelho = fibra), a autenticação PPPoE no roteador e se há bloqueio/manutenção no provedor."
+            }
+            "dns" -> when {
+                d.contains("cliente", true) -> "O DNS configurado (do roteador/DHCP) falha, mas um público funciona. Troque o DNS do roteador por 1.1.1.1 ou 8.8.8.8, ou reinicie o roteador."
+                d.contains("lento", true) -> "DNS demorando. Teste outro servidor DNS (1.1.1.1 ou 8.8.8.8) no roteador."
+                else -> "Não resolve nomes. Verifique se o DNS informado pelo provedor está correto, troque por 1.1.1.1 / 8.8.8.8 e confirme que a internet por IP está funcionando."
+            }
+            "web" -> when {
+                d.contains("portal", true) -> "A rede pede login (portal cativo) ou redireciona o tráfego. Abra o navegador e autentique, ou confira filtros do provedor/roteador."
+                d.contains("certificado", true) || d.contains("TLS", true) -> "Confira data e hora do celular. Se estiverem certas, algum equipamento da rede pode estar interceptando HTTPS."
+                step.status == Status.WARN -> "Só um dos protocolos (HTTP ou HTTPS) funcionou. Pode haver bloqueio de porta, proxy ou firewall no roteador."
+                else -> "IP e DNS funcionam mas a navegação não: pode ser MTU/PPPoE mal configurado, firewall bloqueando 80/443, proxy ou filtro do provedor."
+            }
+            "pub" -> "Não conseguiu consultar o IP público. Pode ser bloqueio do serviço consultado ou internet instável; não afeta o resultado dos outros testes."
+            "route" -> "A rota para antes de chegar ao destino: o problema está no salto indicado ou depois dele (equipamento do provedor ou operadora). Se for logo no primeiro salto, é o roteador."
+            else -> null
+        }
     }
 
     private fun resetRows() {

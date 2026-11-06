@@ -265,10 +265,10 @@ class TerminalPage(
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, ui.dp(10), 0, ui.dp(10))
         }
-        runButton = ui.button("▶ INICIAR", ui.green, ui.onGreen) {
+        runButton = ui.button("▶ INICIAR", ui.accent, ui.onAccent) {
             if (run == Run.PING) stopRun() else startPing()
         }
-        traceButton = ui.button("TRACEROUTE", Color.TRANSPARENT, ui.white, ui.panelStroke) {
+        traceButton = ui.button("TRACEROUTE", ui.accent, ui.onAccent) {
             if (run == Run.TRACE) stopRun() else startTraceRoute()
         }
         // Toque longo: mostra a linha crua que o ping devolveu em cada salto (para depurar o formato).
@@ -283,7 +283,7 @@ class TerminalPage(
             }
             true
         }
-        buttons.addView(runButton, ui.lp(0, ui.dp(46), 1.6f))
+        buttons.addView(runButton, ui.lp(0, ui.dp(46), 1f))
         buttons.addView(traceButton, ui.lp(0, ui.dp(46), 1f).apply { marginStart = ui.dp(8) })
         view.addView(buttons, ui.lp(-1, -2))
 
@@ -331,7 +331,6 @@ class TerminalPage(
             visibility = View.GONE
         }
         chartCard.addView(multiBox, ui.lp(-1, -2))
-        view.addView(chartCard, ui.lp(-1, -2))
 
         // ---- console ----
         val consoleCard = LinearLayout(activity).apply {
@@ -357,7 +356,8 @@ class TerminalPage(
         }
         scroll.addView(output, ViewGroup.LayoutParams(-1, -2))
         consoleCard.addView(scroll, ui.lp(-1, 0, 1f))
-        view.addView(consoleCard, ui.lp(-1, 0, 1f).apply { topMargin = ui.dp(10) })
+        view.addView(consoleCard, ui.lp(-1, 0, 1f))
+        view.addView(chartCard, ui.lp(-1, -2).apply { topMargin = ui.dp(10) })
 
         // ---- rede atual (uma linha) ----
         netLine = ui.tv("", 11f, ui.text, mono = true).apply {
@@ -375,7 +375,7 @@ class TerminalPage(
                 ui.danger(runButton)
                 ui.setEnabled(runButton, true)
                 traceButton.text = "TRACEROUTE"
-                ui.secondary(traceButton)
+                ui.primary(traceButton)
                 ui.setEnabled(traceButton, false)
             }
             Run.TRACE -> {
@@ -391,7 +391,7 @@ class TerminalPage(
                 ui.primary(runButton)
                 ui.setEnabled(runButton, idleGlobal)
                 traceButton.text = "TRACEROUTE"
-                ui.secondary(traceButton)
+                ui.primary(traceButton)
                 ui.setEnabled(traceButton, idleGlobal)
             }
         }

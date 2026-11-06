@@ -21,6 +21,7 @@ object Prefs {
     const val HOST = "host"
     const val KEEP_SCREEN = "keep_screen"
     const val VIBRATE = "vibrate_outage"
+    const val LIGHT_THEME = "light_theme"
     const val WIDGET_HOST = "widget_host"
     const val FAVORITES = "favorites"
     const val HISTORY = "history"

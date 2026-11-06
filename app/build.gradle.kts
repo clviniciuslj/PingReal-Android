@@ -22,8 +22,8 @@ android {
         minSdk = 26
         targetSdk = 35
         // Subir os dois a cada mudança: versionCode +1, versionName 1.1 → 1.2 → ...
-        versionCode = 5
-        versionName = "1.4"
+        versionCode = 6
+        versionName = "1.5"
     }
 
     // Chave fixa: todo APK gerado (inclusive no GitHub) sai com a mesma assinatura,

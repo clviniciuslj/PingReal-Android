@@ -40,7 +40,8 @@ class UiKit(private val context: Context) {
     val white = Palette.white
     val text = Palette.text
     val muted = Palette.muted
-    val onGreen = Palette.onGreen
+    val accent = Palette.accent
+    val onAccent = Palette.onAccent
 
     /** Cores das curvas quando há vários alvos. */
     val series = Palette.series
@@ -65,7 +66,7 @@ class UiKit(private val context: Context) {
             cornerRadius = dpf(radiusDp)
         }
         return RippleDrawable(
-            ColorStateList.valueOf(Color.argb(50, 255, 255, 255)),
+            ColorStateList.valueOf(Palette.overlay(50)),
             roundRect(fill, radiusDp, stroke),
             mask
         )
@@ -122,8 +123,8 @@ class UiKit(private val context: Context) {
         button.background = rippled(fill, 8f, stroke)
     }
 
-    /** Botão principal (preenchido em verde). */
-    fun primary(button: Button) = style(button, green, onGreen)
+    /** Botão principal (preenchido em azul). */
+    fun primary(button: Button) = style(button, accent, onAccent)
 
     /** Botão de parar (contorno, texto vermelho). */
     fun danger(button: Button) = style(button, Color.TRANSPARENT, red, panelStroke)
@@ -243,7 +244,7 @@ class GaugeView(context: Context) : View(context) {
     private var phase = ""
     private var valueText = "—"
     private var unitText = "Mbps"
-    private var accent = Color.rgb(108, 180, 238)
+    private var accent = Palette.cyan
     private var target = 0f
     private var shown = 0f
     private var lastFrame = 0L
@@ -254,27 +255,27 @@ class GaugeView(context: Context) : View(context) {
     private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
-        color = Color.argb(26, 255, 255, 255)
+        color = Palette.overlay(26)
     }
     private val arcPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
     }
     private val scalePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.rgb(138, 143, 148)
+        color = Palette.muted
         textSize = dp(9.5f)
         textAlign = Paint.Align.CENTER
     }
-    private val needlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(230, 232, 234) }
-    private val hubPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(18, 19, 21) }
+    private val needlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Palette.white }
+    private val hubPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Palette.panel }
     private val valuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.rgb(230, 232, 234)
+        color = Palette.white
         textSize = dp(34f)
         textAlign = Paint.Align.CENTER
         typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
     }
     private val unitPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.rgb(138, 143, 148)
+        color = Palette.muted
         textSize = dp(11f)
         textAlign = Paint.Align.CENTER
     }

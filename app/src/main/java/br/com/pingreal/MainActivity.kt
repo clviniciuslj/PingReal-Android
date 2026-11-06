@@ -81,6 +81,9 @@ class MainActivity : Activity(), PageHost {
 
     @Suppress("DEPRECATION")
     override fun onCreate(savedInstanceState: Bundle?) {
+        val light = Prefs.of(this).getBoolean(Prefs.LIGHT_THEME, false)
+        Palette.apply(!light)
+        setTheme(if (light) R.style.AppTheme_Light else R.style.AppTheme)
         super.onCreate(savedInstanceState)
         ui = UiKit(this)
         window.statusBarColor = ui.bg
@@ -395,15 +398,22 @@ class MainActivity : Activity(), PageHost {
 
     private fun showSettings() {
         val p = prefs()
-        val items = arrayOf("Manter a tela ligada durante o ping", "Vibrar quando a conexão cair e voltar")
+        val items = arrayOf("Manter a tela ligada durante o ping", "Vibrar quando a conexão cair e voltar", "Tema claro")
         val checked = booleanArrayOf(
             p.getBoolean(Prefs.KEEP_SCREEN, true),
-            p.getBoolean(Prefs.VIBRATE, true)
+            p.getBoolean(Prefs.VIBRATE, true),
+            p.getBoolean(Prefs.LIGHT_THEME, false)
         )
+        var themeChanged = false
         AlertDialog.Builder(this)
             .setTitle("Opções")
             .setMultiChoiceItems(items, checked) { _, which, isChecked ->
-                val key = if (which == 0) Prefs.KEEP_SCREEN else Prefs.VIBRATE
+                val key = when (which) {
+                    0 -> Prefs.KEEP_SCREEN
+                    1 -> Prefs.VIBRATE
+                    else -> Prefs.LIGHT_THEME
+                }
+                if (which == 2) themeChanged = true
                 p.edit().putBoolean(key, isChecked).apply()
                 if (which == 0) {
                     if (isChecked) {
@@ -414,7 +424,8 @@ class MainActivity : Activity(), PageHost {
                     }
                 }
             }
-            .setPositiveButton("OK", null)
+            .setPositiveButton("OK") { _, _ -> if (themeChanged) recreate() }
+            .setOnCancelListener { if (themeChanged) recreate() }
             .show()
     }
 
