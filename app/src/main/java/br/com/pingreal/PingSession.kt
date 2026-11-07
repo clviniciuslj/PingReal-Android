@@ -114,6 +114,12 @@ class PingSession(
     companion object {
         private const val LOSS_TIMEOUT_MS = 2000L
 
+        /** Ping contínuo sem nenhuma resposta por tanto tempo: o processo está preso, então recomeça. */
+        private const val SILENCE_RESTART_MS = 5000L
+
+        /** Igual, mas para um processo que ainda não respondeu nada (subiu sem rede): tenta de novo mais cedo. */
+        private const val FIRST_REPLY_RESTART_MS = 3000L
+
         private val REPLY_STRICT = Regex(
             """(\d+)\s+bytes from\s+(.+?):?\s+icmp_\w+=(\d+)\s+ttl=(\d+)\s+time[=<]\s*([\d.]+)\s*ms""",
             RegexOption.IGNORE_CASE
@@ -164,6 +170,9 @@ class PingSession(
     @Volatile private var process: Process? = null
     @Volatile private var epoch = 0
 
+    /** Quando o processo atual deu a última resposta (ou quando foi iniciado, se ainda não deu nenhuma). */
+    @Volatile private var lastOutputAt = 0L
+
     // Controle de sequência da execução atual do processo (somente thread da UI).
     private val answered = HashSet<Int>()
     private val settled = HashSet<Int>()
@@ -203,9 +212,30 @@ class PingSession(
         val now = System.currentTimeMillis()
         // Se a UI ficou parada (tela bloqueada, app em segundo plano), o relógio dos pacotes não andou
         // junto: sem este ajuste, todos os pacotes "atrasados" seriam contados como perdidos de uma vez.
-        if (lastTickAt != 0L && now - lastTickAt > 3000) slotStart += now - lastTickAt
+        var uiWasStalled = false
+        if (lastTickAt != 0L && now - lastTickAt > 3000) {
+            slotStart += now - lastTickAt
+            uiWasStalled = true
+        }
         lastTickAt = now
         checkLosses(false)
+
+        // As linhas que o processo escreveu durante a parada da UI ainda estão na fila: dá uma folga.
+        if (uiWasStalled) lastOutputAt = now
+        val limit = if (epochReplies == 0) FIRST_REPLY_RESTART_MS else SILENCE_RESTART_MS
+        if (continuous && !hardError && now - lastOutputAt > limit) restartStuckProcess(now)
+    }
+
+    /**
+     * O processo parou de escrever (travado, ou preso à rede antiga depois de uma troca de rede) e o app só
+     * contava perdas. Fecha as perdas dos pacotes já enviados, para o reinício não esconder nada, e recomeça.
+     */
+    private fun restartStuckProcess(now: Long) {
+        while (slotStart + (nextSeq - 1) * 1000L <= now) {
+            if (nextSeq !in answered && nextSeq !in settled) registerLoss(slotStart + (nextSeq - 1) * 1000L)
+            nextSeq++
+        }
+        restart()
     }
 
     private fun resetTracking() {
@@ -217,6 +247,7 @@ class PingSession(
         slotAnchored = false
         lastTickAt = 0L
         epochReplies = 0
+        lastOutputAt = System.currentTimeMillis()
     }
 
     private fun launch() {
@@ -245,6 +276,7 @@ class PingSession(
                         if (line.isBlank()) continue
                         // O horário vale o da leitura, não o do processamento na UI (que pode atrasar).
                         val readAt = System.currentTimeMillis()
+                        if (myEpoch == epoch && parseReply(line) != null) lastOutputAt = readAt
                         postToUi { if (myEpoch == epoch) handleLine(line, readAt) }
                     }
                 }
