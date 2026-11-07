@@ -4,7 +4,6 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
 import android.graphics.Color
-import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.VibrationEffect
@@ -66,7 +65,7 @@ class TerminalPage(
     val view: LinearLayout
 
     private lateinit var hostInput: EditText
-    private lateinit var favButton: TextView
+    private lateinit var favButton: IconView
     private lateinit var chipsScroll: HorizontalScrollView
     private lateinit var chipsRow: LinearLayout
     private lateinit var runButton: Button
@@ -205,20 +204,22 @@ class TerminalPage(
     // =====================================================================
 
     private fun build() {
-        // ---- entrada + favorito ----
+        // ---- campo do alvo, com a estrela de favorito dentro ----
         val inputRow = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            background = ui.field()
         }
         hostInput = EditText(activity).apply {
             setSingleLine(true)
             textSize = 15f
             setTextColor(ui.white)
             setHintTextColor(ui.muted)
-            hint = "IP ou host  (vários: 8.8.8.8, 1.1.1.1)"
-            typeface = Typeface.MONOSPACE
-            background = ui.field()
-            setPadding(ui.dp(16), 0, ui.dp(16), 0)
+            hint = "IP ou host (vários: 8.8.8.8, 1.1.1.1)"
+            // A dica em Barlow (cabe inteira); o que se digita, na fonte do console.
+            typeface = Fonts.regular
+            background = null
+            setPadding(ui.dp(16), 0, ui.dp(4), 0)
             inputType = InputType.TYPE_CLASS_TEXT or
                 InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
                 InputType.TYPE_TEXT_VARIATION_URI
@@ -234,18 +235,21 @@ class TerminalPage(
             addTextChangedListener(object : TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
                 override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-                override fun afterTextChanged(s: Editable?) = updateStar()
+                override fun afterTextChanged(s: Editable?) {
+                    typeface = if (s.isNullOrEmpty()) Fonts.regular else Fonts.code
+                    updateStar()
+                }
             })
         }
-        favButton = ui.tv("☆", 22f, ui.muted).apply {
-            gravity = Gravity.CENTER
-            background = ui.rippled(ui.panel, 14f, ui.panelStroke)
+        favButton = IconView(activity, IconView.STAR, 22f).apply {
+            color = ui.muted
+            background = ui.rippled(Color.TRANSPARENT, 14f)
             isClickable = true
             contentDescription = "Favoritar"
             setOnClickListener { toggleFavorite() }
         }
         inputRow.addView(hostInput, ui.lp(0, ui.dp(52), 1f))
-        inputRow.addView(favButton, ui.lp(ui.dp(52), ui.dp(52)).apply { marginStart = ui.dp(8) })
+        inputRow.addView(favButton, ui.lp(ui.dp(48), ui.dp(52)))
         view.addView(inputRow, ui.lp(-1, -2))
 
         // ---- atalhos (gateway, DNS, favoritos, recentes) ----
@@ -260,17 +264,16 @@ class TerminalPage(
         }
         view.addView(chipsScroll, ui.lp(-1, -2).apply { topMargin = ui.dp(10) })
 
-        // ---- botões: INICIAR vira PARAR enquanto pinga; TRACEROUTE vira PARAR enquanto rastreia ----
-        val buttons = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, ui.dp(12), 0, ui.dp(12))
-        }
+        // ---- Iniciar | Traceroute: uma barra dividida em duas metades iguais ----
+        val buttons = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
         runButton = ui.button("Iniciar", ui.accent, ui.onAccent) {
             if (run == Run.PING) stopRun() else startPing()
         }
+        ui.corners(runButton, floatArrayOf(16f, 5f, 5f, 16f))
         traceButton = ui.button("Traceroute", ui.accent, ui.onAccent) {
             if (run == Run.TRACE) stopRun() else startTraceRoute()
         }
+        ui.corners(traceButton, floatArrayOf(5f, 16f, 16f, 5f))
         // Toque longo: mostra a linha crua que o ping devolveu em cada salto (para depurar o formato).
         traceButton.setOnLongClickListener {
             if (run == Run.IDLE) {
@@ -284,46 +287,35 @@ class TerminalPage(
             true
         }
         buttons.addView(runButton, ui.lp(0, ui.dp(52), 1f))
-        buttons.addView(traceButton, ui.lp(0, ui.dp(52), 1f).apply { marginStart = ui.dp(8) })
-        view.addView(buttons, ui.lp(-1, -2))
+        buttons.addView(traceButton, ui.lp(0, ui.dp(52), 1f).apply { marginStart = ui.dp(3) })
+        view.addView(buttons, ui.lp(-1, -2).apply { topMargin = ui.dp(12) })
 
-        // ---- gráfico ----
-        val chartCard = ui.card()
-        val chartHeader = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        chartSubtitle = ui.tv("últimos 60 s", 11f, ui.muted).apply { setPadding(0, ui.dp(1), 0, 0) }
+        // ---- gráfico (compacto, no meio) ----
+        val chartCard = ui.card().apply { setPadding(ui.dp(16), ui.dp(12), ui.dp(16), ui.dp(12)) }
+        val chartHeader = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+        chartSubtitle = ui.tv("últimos 60 s", 12f, ui.muted)
         val chartTitle = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(ui.label("Latência"))
-            addView(chartSubtitle)
+            orientation = LinearLayout.HORIZONTAL
+            baselineAlignedChildIndex = 0
+            addView(ui.tv("Latência", 15f, ui.white, bold = true))
+            addView(chartSubtitle, ui.lp(-2, -2).apply { marginStart = ui.dp(8) })
         }
-        latencyNow = ui.tv("— ms", 30f, ui.white, bold = true, mono = true)
+        latencyNow = ui.tv("— ms", 22f, ui.white, bold = true, mono = true)
         chartHeader.addView(chartTitle, ui.lp(0, -2, 1f))
         chartHeader.addView(latencyNow)
         chartCard.addView(chartHeader, ui.lp(-1, -2))
 
         chart = LatencyChartView(activity)
-        chartCard.addView(chart, ui.lp(-1, ui.dp(125)).apply { topMargin = ui.dp(8); bottomMargin = ui.dp(12) })
+        chartCard.addView(chart, ui.lp(-1, ui.dp(84)).apply { topMargin = ui.dp(4); bottomMargin = ui.dp(10) })
 
-        singleStats = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
-        val statRows = listOf(
-            LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL },
-            LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
-        )
-        singleStats.addView(statRows[0], ui.lp(-1, -2))
-        singleStats.addView(statRows[1], ui.lp(-1, -2).apply { topMargin = ui.dp(8) })
-        var statIndex = 0
+        singleStats = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
         fun statCell(label: String): TextView {
             val value = ui.tv(DASH, 14f, ui.white, bold = true, mono = true).apply { maxLines = 1 }
-            val row = statRows[statIndex / 3]
-            row.addView(ui.tile(label, value), ui.lp(0, -2, 1f).apply { if (statIndex % 3 > 0) marginStart = ui.dp(8) })
-            statIndex++
+            singleStats.addView(ui.metric(label, value), ui.lp(0, -2, 1f))
             return value
         }
         statMin = statCell("Mín")
-        statAvg = statCell("Média")
+        statAvg = statCell("Méd")
         statMax = statCell("Máx")
         statJitter = statCell("Jitter")
         statLoss = statCell("Perda")
@@ -335,39 +327,40 @@ class TerminalPage(
             visibility = View.GONE
         }
         chartCard.addView(multiBox, ui.lp(-1, -2))
+        view.addView(chartCard, ui.lp(-1, -2).apply { topMargin = ui.dp(12) })
 
-        // ---- console ----
+        // ---- console (ocupa o resto da tela) ----
         val consoleCard = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             background = ui.roundRect(ui.consoleBg, 20f, ui.panelStroke)
-            setPadding(ui.dp(8), ui.dp(8), ui.dp(8), ui.dp(12))
+            setPadding(ui.dp(4), ui.dp(4), ui.dp(4), ui.dp(10))
         }
         val consoleHeader = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(ui.dp(12), 0, 0, 0)
         }
-        consoleHeader.addView(ui.label("Console"), ui.lp(0, -2, 1f))
+        consoleHeader.addView(ui.tv("Console", 15f, ui.white, bold = true), ui.lp(0, -2, 1f))
         consoleHeader.addView(ui.textAction("Enviar") { showShareDialog() })
-        consoleHeader.addView(ui.textAction("Limpar") { clearConsole() })
+        consoleHeader.addView(ui.textAction("Limpar") { clearAll() })
         consoleCard.addView(consoleHeader, ui.lp(-1, -2))
 
         scroll = ScrollView(activity).apply { isFillViewport = true }
-        output = ui.tv("", 12f, ui.text, mono = true).apply {
-            setPadding(ui.dp(10), ui.dp(4), ui.dp(10), ui.dp(4))
+        output = ui.tv("", 12f, ui.text).apply {
+            ui.code(this)
+            setPadding(ui.dp(12), ui.dp(2), ui.dp(12), ui.dp(4))
             setTextIsSelectable(true)
             setLineSpacing(ui.dpf(2f), 1f)
         }
         scroll.addView(output, ViewGroup.LayoutParams(-1, -2))
         consoleCard.addView(scroll, ui.lp(-1, 0, 1f))
-        view.addView(consoleCard, ui.lp(-1, 0, 1f))
-        view.addView(chartCard, ui.lp(-1, -2).apply { topMargin = ui.dp(10) })
+        view.addView(consoleCard, ui.lp(-1, 0, 1f).apply { topMargin = ui.dp(12) })
 
         // ---- rede atual (uma linha) ----
-        netLine = ui.tv("", 11f, ui.text, mono = true).apply {
+        netLine = ui.tv("", 12f, ui.text, mono = true).apply {
             maxLines = 2
             ellipsize = TextUtils.TruncateAt.END
-            setPadding(ui.dp(2), 0, ui.dp(2), 0)
+            setPadding(ui.dp(4), 0, ui.dp(4), 0)
         }
         view.addView(netLine, ui.lp(-1, -2).apply { topMargin = ui.dp(8) })
     }
@@ -405,7 +398,7 @@ class TerminalPage(
     private fun updateNetLine() {
         val sb = SpannableStringBuilder()
         fun part(label: String?, value: String) {
-            if (sb.isNotEmpty()) sb.append("  ·  ")
+            if (sb.isNotEmpty()) sb.append("     ")
             if (label != null) {
                 val start = sb.length
                 sb.append(label).append(' ')
@@ -433,7 +426,7 @@ class TerminalPage(
         singleStats.visibility = if (multi) View.GONE else View.VISIBLE
         multiBox.visibility = if (multi) View.VISIBLE else View.GONE
         latencyNow.visibility = if (multi) View.GONE else View.VISIBLE
-        chartSubtitle.text = if (multi) "${sessions.size} alvos · últimos 60 s" else "últimos 60 s"
+        chartSubtitle.text = if (multi) "${sessions.size} alvos, últimos 60 s" else "últimos 60 s"
 
         multiBox.removeAllViews()
         multiRows.clear()
@@ -443,7 +436,7 @@ class TerminalPage(
         header.addView(View(activity), ui.lp(0, 1, 1f))
         for ((text, width) in listOf("Atual" to 56, "Méd" to 56, "Perda" to 44)) {
             header.addView(
-                ui.tv(text, 10f, ui.muted, bold = true).apply { gravity = Gravity.END },
+                ui.medium(text, 11f, ui.muted).apply { gravity = Gravity.END },
                 ui.lp(ui.dp(width), -2)
             )
         }
@@ -461,13 +454,13 @@ class TerminalPage(
                     setColor(s.color)
                 }
             }
-            val name = ui.tv(s.host, 11f, ui.white, mono = true).apply {
+            val name = ui.tv(s.host, 13f, ui.white, mono = true).apply {
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
             }
-            val cur = ui.tv(DASH, 11f, ui.white, bold = true, mono = true).apply { gravity = Gravity.END }
-            val avg = ui.tv(DASH, 11f, ui.white, mono = true).apply { gravity = Gravity.END }
-            val loss = ui.tv(DASH, 11f, ui.white, mono = true).apply { gravity = Gravity.END }
+            val cur = ui.tv(DASH, 13f, ui.white, bold = true, mono = true).apply { gravity = Gravity.END }
+            val avg = ui.tv(DASH, 13f, ui.white, mono = true).apply { gravity = Gravity.END }
+            val loss = ui.tv(DASH, 13f, ui.white, mono = true).apply { gravity = Gravity.END }
             row.addView(dot, ui.lp(ui.dp(8), ui.dp(8)))
             row.addView(name, ui.lp(0, -2, 1f).apply { marginStart = ui.dp(8) })
             row.addView(cur, ui.lp(ui.dp(56), -2))
@@ -565,15 +558,15 @@ class TerminalPage(
     private fun updateStar() {
         if (!::favButton.isInitialized) return
         val fav = hostInput.text.toString().trim().let { it.isNotEmpty() && it in loadList(Prefs.FAVORITES) }
-        favButton.text = if (fav) "★" else "☆"
-        favButton.setTextColor(if (fav) ui.amber else ui.muted)
+        favButton.filled = fav
+        favButton.color = if (fav) ui.accentInk else ui.muted
     }
 
     private fun chip(label: String, color: Int, onClick: () -> Unit, onLongClick: (() -> Unit)? = null): TextView =
-        ui.tv(label, 12f, color, mono = true).apply {
+        ui.medium(label, 13f, color).apply {
             maxLines = 1
             setPadding(ui.dp(14), ui.dp(8), ui.dp(14), ui.dp(8))
-            background = ui.rippled(ui.tint(ui.muted, 30), 18f)
+            background = ui.rippled(ui.panel, 18f, ui.panelStroke)
             isClickable = true
             setOnClickListener { onClick() }
             if (onLongClick != null) setOnLongClickListener { onLongClick(); true }
@@ -588,12 +581,12 @@ class TerminalPage(
             hostInput.setSelection(entry.length)
         }
 
-        if (isUsableAddress(netInfo.gateway)) add(chip("⌂ Gateway", ui.white, { addTarget(netInfo.gateway) }))
+        if (isUsableAddress(netInfo.gateway)) add(chip("Gateway", ui.white, { addTarget(netInfo.gateway) }))
         if (isUsableAddress(netInfo.dns)) add(chip("DNS", ui.white, { addTarget(netInfo.dns) }))
 
         val favs = loadList(Prefs.FAVORITES)
         for (f in favs) {
-            add(chip("★ ${short(f)}", ui.amber, { fill(f) }, {
+            add(chip("★ ${short(f)}", ui.accentInk, { fill(f) }, {
                 favs.remove(f)
                 saveList(Prefs.FAVORITES, favs)
                 Toast.makeText(activity, "Favorito removido", Toast.LENGTH_SHORT).show()
@@ -601,7 +594,7 @@ class TerminalPage(
             }))
         }
         for (h in loadList(Prefs.HISTORY).filter { it !in favs }) {
-            add(chip(short(h), ui.muted, { fill(h) }, {
+            add(chip(short(h), ui.text, { fill(h) }, {
                 saveList(Prefs.HISTORY, loadList(Prefs.HISTORY).filter { it != h })
                 Toast.makeText(activity, "Removido do histórico", Toast.LENGTH_SHORT).show()
                 refreshChips()
@@ -658,6 +651,20 @@ class TerminalPage(
         buffer.clear()
         consoleLines = 0
         output.text = ""
+    }
+
+    /** Limpar: apaga console e gráfico; parado, zera também as estatísticas. */
+    private fun clearAll() {
+        clearConsole()
+        if (run == Run.IDLE) {
+            sessions = emptyList()
+            lastRun = Run.IDLE
+            chart.setSeries(intArrayOf())
+            buildStatsPanel()
+            updateStats()
+        } else {
+            chart.clear()
+        }
     }
 
     private fun copyConsole() {

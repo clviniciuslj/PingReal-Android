@@ -45,8 +45,7 @@ class DiagnosticEngine(private val context: Context) {
             "inet" to "Internet por IP",
             "dns" to "DNS",
             "web" to "Navegação (HTTP/HTTPS)",
-            "pub" to "IP público e provedor",
-            "route" to "Rota até a internet"
+            "pub" to "IP público e provedor"
         )
 
         private val INTERNET_TARGETS = listOf("1.1.1.1", "8.8.8.8", "9.9.9.9")
@@ -91,7 +90,7 @@ class DiagnosticEngine(private val context: Context) {
             val noLink = byId.getValue("link").status == Status.FAIL
             val noIp = byId.getValue("ip").status == Status.FAIL
             if (noLink || noIp) {
-                for (id in listOf("gw", "inet", "dns", "web", "pub", "route")) {
+                for (id in listOf("gw", "inet", "dns", "web", "pub")) {
                     set(id, Status.SKIP, "Não testado: sem conexão local")
                 }
                 return DiagnosticReport(steps, false)
@@ -104,8 +103,6 @@ class DiagnosticEngine(private val context: Context) {
             set("inet", Status.RUNNING, "")
             internetStep().let { set("inet", it.first, it.second) }
             if (cancelled) return partial()
-
-            val internetDown = byId.getValue("inet").status == Status.FAIL
 
             set("dns", Status.RUNNING, "")
             dnsStep(net).let { set("dns", it.first, it.second) }
@@ -122,15 +119,6 @@ class DiagnosticEngine(private val context: Context) {
                 set("pub", Status.RUNNING, "")
                 pubStep(web.traceIp).let { set("pub", it.first, it.second) }
             }
-            if (cancelled) return partial()
-
-            if (internetDown && byId.getValue("gw").status != Status.FAIL) {
-                set("route", Status.RUNNING, "")
-                routeStep().let { set("route", it.first, it.second) }
-            } else {
-                set("route", Status.SKIP, "Não necessário")
-            }
-
             return DiagnosticReport(steps, cancelled)
         } catch (e: Exception) {
             // Cancelar interrompe as threads no meio de uma etapa; isso não é erro.
@@ -440,33 +428,5 @@ class DiagnosticEngine(private val context: Context) {
         if (ip == null) return Status.WARN to "Não foi possível descobrir o IP público"
         val parts = listOfNotNull("IP público $ip", provider, place)
         return Status.OK to parts.joinToString(" · ")
-    }
-
-    private fun routeStep(): Pair<Status, String> {
-        val overhead = Tracer.calibrateOverhead(procs)
-        val hops = ArrayList<String>()
-        var lastAnswered = 0
-        var lastAddress: String? = null
-        var reached = false
-        for (ttl in 1..8) {
-            if (cancelled) break
-            val p = Tracer.probe("1.1.1.1", ttl, overhead, procs)
-            if (p.address != null) {
-                lastAnswered = ttl
-                lastAddress = p.address
-            }
-            hops.add("$ttl ${p.address ?: "*"}")
-            if (p.reached) {
-                reached = true
-                break
-            }
-        }
-        val path = hops.joinToString("  ›  ")
-        return when {
-            reached -> Status.OK to path
-            lastAddress != null ->
-                Status.FAIL to "A rota para no salto $lastAnswered ($lastAddress) · $path"
-            else -> Status.FAIL to "Nenhum salto respondeu · $path"
-        }
     }
 }

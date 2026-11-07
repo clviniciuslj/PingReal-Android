@@ -11,7 +11,6 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
-import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.ConnectivityManager
 import android.net.LinkProperties
@@ -26,6 +25,7 @@ import android.text.TextPaint
 import android.view.Gravity
 import android.view.View
 import android.view.WindowInsets
+import android.view.WindowInsetsController
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -55,11 +55,9 @@ class MainActivity : Activity(), PageHost {
     private lateinit var nav: LinearLayout
     private lateinit var statusText: TextView
     private lateinit var statusDot: GradientDrawable
-    private lateinit var statusPill: LinearLayout
-    private lateinit var titleView: TextView
     private val tabItems = ArrayList<LinearLayout>()
     private val pages = ArrayList<View>()
-    private val tabIcons = ArrayList<NavIconView>()
+    private val tabIcons = ArrayList<IconView>()
     private val tabLabels = ArrayList<TextView>()
 
     private var busy = false
@@ -95,6 +93,7 @@ class MainActivity : Activity(), PageHost {
 
         buildUi()
         setContentView(root)
+        applyBarAppearance()
         selectTab(0)
         refreshNetwork()
 
@@ -265,7 +264,19 @@ class MainActivity : Activity(), PageHost {
         statusText.text = label
         statusText.setTextColor(color)
         statusDot.setColor(color)
-        statusPill.background = ui.roundRect(ui.tint(color), 20f)
+    }
+
+    /** Ícones escuros nas barras do sistema quando o tema é claro. */
+    @Suppress("DEPRECATION")
+    private fun applyBarAppearance() {
+        if (Palette.isDark) return
+        if (Build.VERSION.SDK_INT >= 30) {
+            val mask = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+            window.insetsController?.setSystemBarsAppearance(mask, mask)
+        } else {
+            window.decorView.systemUiVisibility = window.decorView.systemUiVisibility or
+                View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        }
     }
 
     private fun scheduleNetworkRefresh() {
@@ -322,44 +333,43 @@ class MainActivity : Activity(), PageHost {
             insets
         }
 
-        // ---- cabeçalho: nome + versão, status e opções ----
-        val header = LinearLayout(this).apply {
+        // ---- cabeçalho: marca centralizada com o status embaixo; opções à direita ----
+        val header = FrameLayout(this).apply { setPadding(0, ui.dp(2), 0, ui.dp(12)) }
+        val brand = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(ui.dp(2), ui.dp(4), 0, ui.dp(12))
+            addView(BrandMarkView(this@MainActivity), ui.lp(ui.dp(25), ui.dp(20)).apply { marginEnd = ui.dp(8) })
+            addView(ui.tv("Real Ping", 24f, ui.white).apply {
+                typeface = Fonts.bold
+                letterSpacing = 0.01f
+            })
         }
-        titleView = ui.tv("Terminal", 26f, ui.white, bold = true)
-        val titleBox = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(titleView)
-            addView(ui.tv("Real Ping " + versionName(), 11f, ui.muted, mono = true))
-        }
-        header.addView(titleBox)
-                header.addView(View(this), ui.lp(0, 1, 1f))
-        statusText = ui.tv("Pronto", 11f, ui.muted, bold = true)
+        statusText = ui.medium("Pronto", 12f, ui.muted)
         statusDot = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
             setColor(ui.muted)
         }
-        statusPill = LinearLayout(this).apply {
+        val status = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(ui.dp(10), ui.dp(5), ui.dp(12), ui.dp(5))
-            background = ui.roundRect(ui.tint(ui.muted), 20f)
+            addView(View(this@MainActivity).apply { background = statusDot }, ui.lp(ui.dp(6), ui.dp(6)).apply { marginEnd = ui.dp(6) })
+            addView(statusText)
         }
-        statusPill.addView(View(this).apply { background = statusDot }, ui.lp(ui.dp(7), ui.dp(7)).apply { marginEnd = ui.dp(7) })
-        statusPill.addView(statusText)
-        header.addView(statusPill)
-        header.addView(
-            ui.tv("⋮", 18f, ui.muted, bold = true).apply {
-                gravity = Gravity.CENTER
-                background = ui.rippled(Color.TRANSPARENT, 8f)
-                isClickable = true
-                contentDescription = "Opções"
-                setOnClickListener { showSettings() }
-            },
-            ui.lp(ui.dp(36), ui.dp(36)).apply { marginStart = ui.dp(6) }
-        )
+        val center = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            addView(brand)
+            addView(status, ui.lp(-2, -2).apply { topMargin = ui.dp(1) })
+        }
+        header.addView(center, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+        val more = IconView(this, IconView.MORE, 22f).apply {
+            color = ui.muted
+            background = ui.rippled(Color.TRANSPARENT, 22f)
+            isClickable = true
+            contentDescription = "Opções"
+            setOnClickListener { showSettings() }
+        }
+        header.addView(more, FrameLayout.LayoutParams(ui.dp(44), ui.dp(44), Gravity.END or Gravity.CENTER_VERTICAL))
         root.addView(header, ui.lp(-1, -2))
 
         // ---- abas ----
@@ -373,22 +383,21 @@ class MainActivity : Activity(), PageHost {
         }
         root.addView(frame, ui.lp(-1, 0, 1f))
 
-        // ---- barra de abas ----
+        // ---- barra de abas (pílula) ----
         nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            background = ui.roundRect(ui.panel, 26f, if (Palette.isDark) ui.panelStroke else 0)
-            if (!Palette.isDark) elevation = ui.dpf(3f)
+            background = ui.roundRect(ui.panel, 28f, ui.panelStroke)
             setPadding(ui.dp(6), ui.dp(6), ui.dp(6), ui.dp(6))
         }
-        nav.addView(navItem(0, NavIconView.TERMINAL, "Terminal"), ui.lp(0, -2, 1f))
-        nav.addView(navItem(1, NavIconView.DIAGNOSTIC, "Diagnóstico"), ui.lp(0, -2, 1f))
-        nav.addView(navItem(2, NavIconView.HOUSE, "Condomínio"), ui.lp(0, -2, 1f))
+        nav.addView(navItem(0, IconView.TERMINAL, "Terminal"), ui.lp(0, -2, 1f))
+        nav.addView(navItem(1, IconView.DIAGNOSTIC, "Diagnóstico"), ui.lp(0, -2, 1f).apply { marginStart = ui.dp(4) })
+        nav.addView(navItem(2, IconView.HOUSE, "Condomínio"), ui.lp(0, -2, 1f).apply { marginStart = ui.dp(4) })
         root.addView(nav, ui.lp(-1, -2).apply { topMargin = ui.dp(10) })
     }
 
     private fun navItem(index: Int, kind: Int, label: String): LinearLayout {
-        val icon = NavIconView(this, kind)
-        val text = ui.tv(label, 11f, ui.muted, bold = true).apply { gravity = Gravity.CENTER }
+        val icon = IconView(this, kind)
+        val text = ui.medium(label, 12f, ui.muted).apply { gravity = Gravity.CENTER }
         tabIcons.add(icon)
         tabLabels.add(text)
         val item = LinearLayout(this)
@@ -396,10 +405,10 @@ class MainActivity : Activity(), PageHost {
         return item.apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(0, ui.dp(8), 0, ui.dp(8))
+            setPadding(0, ui.dp(8), 0, ui.dp(7))
             isClickable = true
             addView(icon, ui.lp(ui.dp(24), ui.dp(24)))
-            addView(text, ui.lp(-2, -2).apply { topMargin = ui.dp(2) })
+            addView(text, ui.lp(-2, -2).apply { topMargin = ui.dp(3) })
             setOnClickListener { selectTab(index) }
         }
     }
@@ -407,12 +416,13 @@ class MainActivity : Activity(), PageHost {
     private fun selectTab(index: Int) {
         for ((i, page) in pages.withIndex()) page.visibility = if (i == index) View.VISIBLE else View.GONE
         for (i in tabIcons.indices) {
-            val color = if (i == index) ui.accent else ui.muted
-            tabItems[i].background = if (i == index) ui.rippled(ui.tint(ui.accent, 34), 16f) else ui.rippled(Color.TRANSPARENT, 16f)
-            tabIcons[i].activeColor = color
+            val active = i == index
+            val color = if (active) ui.accentInk else ui.muted
+            tabItems[i].background = ui.rippled(if (active) ui.softFill(ui.accent) else Color.TRANSPARENT, 22f)
+            tabIcons[i].color = color
             tabLabels[i].setTextColor(color)
+            tabLabels[i].typeface = if (active) Fonts.semibold else Fonts.medium
         }
-        titleView.text = listOf("Terminal", "Diagnóstico", "Condomínio")[index]
         if (index != 0) terminal.hideKeyboard()
     }
 
@@ -425,8 +435,14 @@ class MainActivity : Activity(), PageHost {
             p.getBoolean(Prefs.LIGHT_THEME, false)
         )
         var themeChanged = false
+        val title = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(ui.dp(24), ui.dp(20), ui.dp(24), ui.dp(6))
+            addView(ui.tv("Opções", 20f, ui.white, bold = true))
+            addView(ui.tv("Versão ${versionName()}", 13f, ui.muted).apply { setPadding(0, ui.dp(2), 0, 0) })
+        }
         AlertDialog.Builder(this)
-            .setTitle("Opções")
+            .setCustomTitle(title)
             .setMultiChoiceItems(items, checked) { _, which, isChecked ->
                 val key = when (which) {
                     0 -> Prefs.KEEP_SCREEN
@@ -462,7 +478,7 @@ class MainActivity : Activity(), PageHost {
         val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = ui.white
             textSize = 52f
-            typeface = Typeface.DEFAULT_BOLD
+            typeface = Fonts.bold
         }
         val datePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = ui.muted
@@ -471,7 +487,7 @@ class MainActivity : Activity(), PageHost {
         val bodyPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             color = ui.white
             textSize = 30f
-            typeface = Typeface.MONOSPACE
+            typeface = Fonts.code
         }
         val layout = StaticLayout.Builder.obtain(body, 0, body.length, bodyPaint, inner)
             .setLineSpacing(8f, 1f)

@@ -94,12 +94,14 @@ class LatencyChartView(context: Context) : View(context) {
     }
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Palette.muted
-        textSize = dp(9f)
+        textSize = dp(10f)
+        typeface = Fonts.number
     }
     private val emptyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Palette.muted
-        textSize = dp(12f)
+        textSize = dp(13f)
         textAlign = Paint.Align.CENTER
+        typeface = Fonts.medium
     }
     private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE

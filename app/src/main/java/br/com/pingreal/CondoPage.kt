@@ -91,7 +91,7 @@ class CondoPage(
 
     private class GroupViews(
         val quadra: Int,
-        val chevron: TextView,
+        val chevron: IconView,
         val flag: View,
         val summary: TextView,
         val button: Button,
@@ -163,6 +163,9 @@ class CondoPage(
     private lateinit var statSent: TextView
     private lateinit var statReceived: TextView
     private lateinit var statLoss: TextView
+    private lateinit var statPercent: TextView
+    private lateinit var summaryBar: SegmentBar
+    private lateinit var consoleChevron: IconView
     private lateinit var pingAllButton: Button
     private lateinit var searchInput: EditText
     private lateinit var errorsToggle: TextView
@@ -243,47 +246,45 @@ class CondoPage(
     // =====================================================================
 
     private fun build() {
-        // ---- resumo ----
+        // ---- resumo: quantas respondem, barra por estado e os totais ----
         val summary = ui.card()
-        fun stat(label: String, big: Boolean = true): Pair<LinearLayout, TextView> {
-            val value = ui.tv("0", 16f, ui.white, bold = true, mono = true).apply { maxLines = 1 }
-            return ui.tile(label, value) to value
+        statResponding = ui.tv("0", 36f, ui.white, bold = true, mono = true)
+        statTotal = ui.tv("de 0", 18f, ui.muted, mono = true)
+        statPercent = ui.medium("respondendo", 13f, ui.muted)
+        val hero = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(statResponding)
+            addView(statTotal, ui.lp(-2, -2).apply { marginStart = ui.dp(8) })
+            addView(View(activity), ui.lp(0, 1, 1f))
+            addView(statPercent)
         }
-        val (totalCell, totalValue) = stat("Total")
-        val (respondingCell, respondingValue) = stat("Respondendo")
-        val (noResponseCell, noResponseValue) = stat("Sem resposta")
-        val (sentCell, sentValue) = stat("Enviados")
-        val (receivedCell, receivedValue) = stat("Recebidos")
-        val (lossCell, lossValue) = stat("Perda")
-        statTotal = totalValue
-        statResponding = respondingValue
-        statNoResponse = noResponseValue
-        statSent = sentValue
-        statReceived = receivedValue
-        statLoss = lossValue
-
-        val firstRow = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
-        for ((i, cell) in listOf(totalCell, respondingCell, noResponseCell).withIndex()) firstRow.addView(cell, ui.lp(0, -2, 1f).apply { if (i > 0) marginStart = ui.dp(8) })
-        val secondRow = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
-        for ((i, cell) in listOf(sentCell, receivedCell, lossCell).withIndex()) secondRow.addView(cell, ui.lp(0, -2, 1f).apply { if (i > 0) marginStart = ui.dp(8) })
-        summary.addView(firstRow, ui.lp(-1, -2))
-        summary.addView(secondRow, ui.lp(-1, -2).apply { topMargin = ui.dp(8) })
+        summary.addView(hero, ui.lp(-1, -2))
+        summaryBar = SegmentBar(activity)
+        summary.addView(summaryBar, ui.lp(-1, ui.dp(8)).apply { topMargin = ui.dp(8) })
+        val totals = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+        fun metric(label: String): TextView {
+            val value = ui.tv("0", 15f, ui.white, bold = true, mono = true).apply { maxLines = 1 }
+            totals.addView(ui.metric(label, value), ui.lp(0, -2, 1f))
+            return value
+        }
+        statNoResponse = metric("Sem resposta")
+        statSent = metric("Enviados")
+        statReceived = metric("Recebidos")
+        statLoss = metric("Perda")
+        summary.addView(totals, ui.lp(-1, -2).apply { topMargin = ui.dp(14) })
         view.addView(summary, ui.lp(-1, -2))
 
         // ---- ações ----
-        val actions = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, ui.dp(12), 0, ui.dp(10))
-        }
+        val actions = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
         pingAllButton = ui.button("Pingar tudo", ui.accent, ui.onAccent) { toggleMonitoring() }
-        val addButton = ui.button("Cadastrar", ui.tint(ui.accent, 30), ui.accent) { showOnuDialog(null) }
-        val importButton = ui.button("Importar", ui.tint(ui.accent, 30), ui.accent) {
+        val addButton = ui.button("Cadastrar", ui.softFill(ui.accent), ui.accentInk) { showOnuDialog(null) }
+        val importButton = ui.button("Importar", ui.softFill(ui.accent), ui.accentInk) {
             host.pickTextFile { text -> importText(text) }
         }
-        actions.addView(pingAllButton, ui.lp(0, ui.dp(48), 1.5f))
-        actions.addView(addButton, ui.lp(0, ui.dp(48), 1.2f).apply { marginStart = ui.dp(8) })
-        actions.addView(importButton, ui.lp(0, ui.dp(48), 1f).apply { marginStart = ui.dp(8) })
-        view.addView(actions, ui.lp(-1, -2))
+        actions.addView(pingAllButton, ui.lp(0, ui.dp(52), 1.3f))
+        actions.addView(addButton, ui.lp(0, ui.dp(52), 1f).apply { marginStart = ui.dp(8) })
+        actions.addView(importButton, ui.lp(0, ui.dp(52), 1f).apply { marginStart = ui.dp(8) })
+        view.addView(actions, ui.lp(-1, -2).apply { topMargin = ui.dp(12) })
 
         // ---- busca e filtros ----
         val filters = LinearLayout(activity).apply {
@@ -292,10 +293,11 @@ class CondoPage(
         }
         searchInput = EditText(activity).apply {
             setSingleLine(true)
-            textSize = 13f
+            textSize = 15f
+            typeface = Fonts.regular
             setTextColor(ui.white)
             setHintTextColor(ui.muted)
-            hint = "Buscar por IP ou identificação"
+            hint = "Buscar IP ou identificação"
             background = ui.field()
             setPadding(ui.dp(16), 0, ui.dp(16), 0)
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
@@ -315,10 +317,10 @@ class CondoPage(
             styleErrorsToggle()
             filterChanged()
         }
-        filters.addView(errorsToggle, ui.lp(-2, ui.dp(46)).apply { marginStart = ui.dp(6) })
-        filters.addView(filterAction("⊞") { setAllExpanded(true) }, ui.lp(ui.dp(46), ui.dp(46)).apply { marginStart = ui.dp(6) })
-        filters.addView(filterAction("⊟") { setAllExpanded(false) }, ui.lp(ui.dp(46), ui.dp(46)).apply { marginStart = ui.dp(6) })
-        view.addView(filters, ui.lp(-1, -2))
+        filters.addView(errorsToggle, ui.lp(-2, ui.dp(46)).apply { marginStart = ui.dp(8) })
+        filters.addView(iconAction(IconView.EXPAND_ALL, "Abrir todas as quadras") { setAllExpanded(true) }, ui.lp(ui.dp(46), ui.dp(46)).apply { marginStart = ui.dp(8) })
+        filters.addView(iconAction(IconView.COLLAPSE_ALL, "Fechar todas as quadras") { setAllExpanded(false) }, ui.lp(ui.dp(46), ui.dp(46)).apply { marginStart = ui.dp(8) })
+        view.addView(filters, ui.lp(-1, -2).apply { topMargin = ui.dp(12) })
         styleErrorsToggle()
 
         // ---- lista agrupada por quadra ----
@@ -327,25 +329,32 @@ class CondoPage(
             isVerticalScrollBarEnabled = false
             addView(listBox)
         }
-        view.addView(listScroll, ui.lp(-1, 0, 1f).apply { topMargin = ui.dp(8) })
+        view.addView(listScroll, ui.lp(-1, 0, 1f).apply { topMargin = ui.dp(12) })
 
         // ---- console ----
         val consoleCard = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            background = ui.roundRect(ui.consoleBg, 20f, ui.panelStroke)
-            setPadding(ui.dp(4), ui.dp(2), ui.dp(4), ui.dp(4))
+            background = ui.roundRect(ui.consoleBg, 18f, ui.panelStroke)
+            setPadding(ui.dp(4), ui.dp(2), ui.dp(4), ui.dp(6))
         }
         val consoleHeader = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(ui.dp(6), 0, 0, 0)
         }
-        consoleToggle = ui.tv("▾ Console", 13f, ui.muted, bold = true).apply {
-            setPadding(ui.dp(4), ui.dp(8), ui.dp(8), ui.dp(8))
+        consoleChevron = IconView(activity, IconView.CHEVRON, 18f).apply { color = ui.muted }
+        consoleToggle = ui.tv("Console", 15f, ui.white, bold = true)
+        val toggleArea = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(ui.dp(8), ui.dp(10), ui.dp(12), ui.dp(10))
+            background = ui.rippled(Color.TRANSPARENT, 12f)
             isClickable = true
             setOnClickListener { setConsoleOpen(!consoleOpen) }
+            addView(consoleChevron, ui.lp(ui.dp(20), ui.dp(20)).apply { marginEnd = ui.dp(6) })
+            addView(consoleToggle)
         }
-        consoleHeader.addView(consoleToggle, ui.lp(0, -2, 1f))
+        consoleHeader.addView(toggleArea)
+        consoleHeader.addView(View(activity), ui.lp(0, 1, 1f))
         consoleFilterAction = ui.textAction("Todas") { showConsoleFilterDialog() }
         consoleHeader.addView(consoleFilterAction)
         consoleHeader.addView(ui.textAction("Limpar") { clearConsole() })
@@ -354,28 +363,38 @@ class CondoPage(
 
         consoleBody = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         consoleScroll = ScrollView(activity).apply { isFillViewport = true }
-        consoleOutput = ui.tv("", 11f, ui.text, mono = true).apply {
-            setPadding(ui.dp(8), ui.dp(2), ui.dp(8), ui.dp(2))
+        consoleOutput = ui.tv("", 11.5f, ui.text).apply {
+            ui.code(this)
+            setPadding(ui.dp(10), ui.dp(2), ui.dp(10), ui.dp(2))
             setTextIsSelectable(true)
         }
         consoleScroll.addView(consoleOutput, ViewGroup.LayoutParams(-1, -2))
-        consoleBody.addView(consoleScroll, ui.lp(-1, ui.dp(100)))
+        consoleBody.addView(consoleScroll, ui.lp(-1, ui.dp(110)))
         consoleCard.addView(consoleBody, ui.lp(-1, -2))
-        view.addView(consoleCard, ui.lp(-1, -2).apply { topMargin = ui.dp(8) })
+        view.addView(consoleCard, ui.lp(-1, -2).apply { topMargin = ui.dp(12) })
     }
 
     private fun filterAction(label: String, onClick: () -> Unit): TextView =
-        ui.tv(label, 13f, ui.muted, bold = true).apply {
+        ui.medium(label, 14f, ui.text).apply {
             gravity = Gravity.CENTER
-            setPadding(ui.dp(14), 0, ui.dp(14), 0)
-            background = ui.rippled(ui.tint(ui.muted, 28), 14f)
+            setPadding(ui.dp(16), 0, ui.dp(16), 0)
             isClickable = true
             setOnClickListener { onClick() }
         }
 
+    private fun iconAction(kind: Int, description: String, onClick: () -> Unit): IconView =
+        IconView(activity, kind, 20f).apply {
+            color = ui.text
+            background = ui.rippled(ui.panel, 14f, ui.panelStroke)
+            isClickable = true
+            contentDescription = description
+            setOnClickListener { onClick() }
+        }
+
     private fun styleErrorsToggle() {
-        errorsToggle.setTextColor(if (onlyErrors) ui.red else ui.muted)
-        errorsToggle.background = ui.rippled(if (onlyErrors) ui.tint(ui.red, 40) else ui.tint(ui.muted, 28), 14f)
+        errorsToggle.setTextColor(if (onlyErrors) ui.red else ui.text)
+        errorsToggle.background =
+            if (onlyErrors) ui.rippled(ui.softFill(ui.red), 14f) else ui.rippled(ui.panel, 14f, ui.panelStroke)
     }
 
     private fun updateControls() {
@@ -511,7 +530,7 @@ class CondoPage(
         groupViews.clear()
 
         if (rows.isEmpty()) {
-            listBox.addView(ui.tv("Nenhuma ONU cadastrada.", 12f, ui.muted).apply { setPadding(ui.dp(2), ui.dp(8), 0, 0) })
+            listBox.addView(ui.tv("Nenhuma ONU cadastrada.", 14f, ui.muted).apply { setPadding(ui.dp(4), ui.dp(8), 0, 0) })
             updateControls()
             return
         }
@@ -519,7 +538,7 @@ class CondoPage(
         for (quadra in groups.keys.toList()) {
             val shown = rows.filter { it.onu.quadra == quadra && matches(it) }
             if (shown.isEmpty()) continue
-            listBox.addView(buildGroup(quadra), ui.lp(-1, -2).apply { bottomMargin = ui.dp(8) })
+            listBox.addView(buildGroup(quadra), ui.lp(-1, -2).apply { bottomMargin = ui.dp(10) })
         }
         updateControls()
     }
@@ -527,14 +546,23 @@ class CondoPage(
     private fun buildGroup(quadra: Int): View {
         val gs = groups.getOrPut(quadra) { GroupState() }
 
-        val chevron = ui.tv(if (gs.expanded) "▾" else "▸", 13f, ui.muted, bold = true)
+        val chevron = IconView(activity, IconView.CHEVRON, 18f).apply {
+            color = ui.muted
+            rotation = if (gs.expanded) 0f else -90f
+        }
         val flag = View(activity).apply {
-            background = ui.roundRect(ui.red, 3f)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(ui.red)
+            }
             isClickable = true
+            contentDescription = "Último ping da quadra teve perda"
             setOnClickListener { showFailureDialog(quadra) }
         }
-        val summary = ui.tv("", 11f, ui.muted).apply { setPadding(ui.dp(18), ui.dp(2), 0, 0) }
-        val button = ui.button("Pingar quadra", ui.tint(ui.accent, 30), ui.accent) { toggleQuadraPing(quadra) }
+        val summary = ui.tv("", 13f, ui.muted).apply { setPadding(ui.dp(26), ui.dp(2), 0, 0) }
+        val button = ui.button("Pingar quadra", ui.softFill(ui.accent), ui.accentInk) { toggleQuadraPing(quadra) }
+        button.textSize = 13f
+        button.setPadding(ui.dp(12), 0, ui.dp(12), 0)
         val rowsBox = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             visibility = if (gs.expanded) View.VISIBLE else View.GONE
@@ -546,17 +574,16 @@ class CondoPage(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        top.addView(chevron, ui.lp(ui.dp(18), -2))
-        top.addView(ui.tv("Quadra $quadra", 13f, ui.white, bold = true), ui.lp(-2, -2))
-        top.addView(flag, ui.lp(ui.dp(12), ui.dp(12)).apply { marginStart = ui.dp(8) })
+        top.addView(chevron, ui.lp(ui.dp(20), ui.dp(20)).apply { marginEnd = ui.dp(6) })
+        top.addView(ui.tv("Quadra $quadra", 16f, ui.white, bold = true), ui.lp(-2, -2))
+        top.addView(flag, ui.lp(ui.dp(9), ui.dp(9)).apply { marginStart = ui.dp(8) })
         top.addView(View(activity), ui.lp(0, 1, 1f))
-        top.addView(button, ui.lp(-2, ui.dp(34)).apply { setMargins(ui.dp(8), 0, 0, 0) })
-        button.setPadding(ui.dp(10), 0, ui.dp(10), 0)
+        top.addView(button, ui.lp(-2, ui.dp(36)).apply { marginStart = ui.dp(8) })
 
         val header = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(ui.dp(14), ui.dp(8), ui.dp(10), ui.dp(8))
-            background = ui.rippled(Color.TRANSPARENT, 10f)
+            setPadding(ui.dp(12), ui.dp(12), ui.dp(12), ui.dp(12))
+            background = ui.rippled(Color.TRANSPARENT, 18f)
             isClickable = true
             setOnClickListener { toggleExpanded(quadra) }
             addView(top, ui.lp(-1, -2))
@@ -565,7 +592,7 @@ class CondoPage(
 
         val card = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            background = ui.roundRect(ui.panel, 10f, ui.panelStroke)
+            background = ui.roundRect(ui.panel, 18f, ui.panelStroke)
             addView(header, ui.lp(-1, -2))
             addView(rowsBox, ui.lp(-1, -2))
         }
@@ -578,7 +605,7 @@ class CondoPage(
         val gs = groups[quadra] ?: return
         val gv = groupViews[quadra] ?: return
         gs.expanded = !gs.expanded
-        gv.chevron.text = if (gs.expanded) "▾" else "▸"
+        gv.chevron.animate().rotation(if (gs.expanded) 0f else -90f).setDuration(160).start()
         gv.rowsBox.visibility = if (gs.expanded) View.VISIBLE else View.GONE
         if (gs.expanded && !gv.built) buildRows(gv)
     }
@@ -586,16 +613,19 @@ class CondoPage(
     private fun buildRows(gv: GroupViews) {
         gv.rowsBox.removeAllViews()
         gv.rows.clear()
-        gv.rowsBox.addView(View(activity).apply { setBackgroundColor(ui.panelStroke) }, ui.lp(-1, 1))
         for (row in rows.filter { it.onu.quadra == gv.quadra && matches(it) }) {
+            gv.rowsBox.addView(
+                View(activity).apply { setBackgroundColor(ui.panelStroke) },
+                ui.lp(-1, 1).apply { marginStart = ui.dp(16); marginEnd = ui.dp(16) }
+            )
             val dot = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setColor(ui.muted)
             }
-            val latency = ui.tv("—", 12f, ui.white, mono = true).apply { gravity = Gravity.END }
-            val detail = ui.tv("", 10.5f, ui.muted, mono = true).apply { setPadding(ui.dp(18), ui.dp(2), 0, 0) }
-            val title = ui.tv("Lote ${row.onu.lote}", 13f, ui.white, bold = true)
-            val name = ui.tv(row.identificacao, 12f, ui.muted).apply {
+            val latency = ui.tv("—", 14f, ui.white, bold = true, mono = true).apply { gravity = Gravity.END }
+            val detail = ui.tv("", 12f, ui.muted, mono = true).apply { setPadding(ui.dp(18), ui.dp(3), 0, 0) }
+            val title = ui.tv("Lote ${row.onu.lote}", 15f, ui.white, bold = true)
+            val name = ui.tv(row.identificacao, 13f, ui.muted).apply {
                 maxLines = 1
                 ellipsize = android.text.TextUtils.TruncateAt.END
                 setPadding(ui.dp(8), 0, ui.dp(8), 0)
@@ -611,7 +641,7 @@ class CondoPage(
             }
             val root = LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(ui.dp(14), ui.dp(8), ui.dp(14), ui.dp(8))
+                setPadding(ui.dp(16), ui.dp(10), ui.dp(16), ui.dp(10))
                 background = ui.rippled(Color.TRANSPARENT, 0f)
                 isClickable = true
                 setOnClickListener { openTerminal(row) }
@@ -626,6 +656,7 @@ class CondoPage(
             gv.rows[row.onu.id] = RowViews(root, dot, latency, detail)
             refreshRow(row)
         }
+        gv.rowsBox.addView(View(activity), ui.lp(-1, ui.dp(4)))
         gv.built = true
     }
 
@@ -633,7 +664,7 @@ class CondoPage(
         OnuState.ONLINE -> ui.green
         OnuState.INSTAVEL -> ui.orange
         OnuState.SEM_RESPOSTA -> ui.red
-        OnuState.ERRO -> ui.amber
+        OnuState.ERRO -> ui.violet
         OnuState.DESCONHECIDO -> ui.muted
     }
 
@@ -643,12 +674,13 @@ class CondoPage(
         rv.dot.setColor(color)
         rv.latency.text = row.latencyText
 
+        val gap = "    "
         val sb = SpannableStringBuilder()
-        sb.append(row.ip).append(" · ")
+        sb.append(row.ip).append(gap)
         val start = sb.length
         sb.append(row.statusText)
         sb.setSpan(ForegroundColorSpan(color), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        sb.append(" · ${row.tx}/${row.rx} · ${row.lossText} · ${row.lastResponseText}")
+        sb.append("$gap${row.tx}/${row.rx}$gap${row.lossText}$gap${row.lastResponseText}")
         rv.detail.text = sb
     }
 
@@ -660,27 +692,32 @@ class CondoPage(
         val down = list.count { it.state == OnuState.SEM_RESPOSTA || it.state == OnuState.ERRO }
         val unstable = list.count { it.state == OnuState.INSTAVEL }
 
-        val text = "${list.size} ONU(s)  ·  $online online  ·  $down sem resposta"
-        gv.summary.text = if (unstable > 0) "$text  ·  $unstable instável(is)" else text
+        val count = if (list.size == 1) "1 ONU" else "${list.size} ONUs"
+        val text = "$count, $online online, $down sem resposta"
+        gv.summary.text = if (unstable > 0) "$text, $unstable instável(is)" else text
         gv.flag.visibility = if (gs.failures.isNotEmpty()) View.VISIBLE else View.GONE
     }
 
     private fun updateSummary() {
         val total = rows.size
         val responding = rows.count { it.state == OnuState.ONLINE }
+        val unstable = rows.count { it.state == OnuState.INSTAVEL }
         val noResponse = rows.count { it.state == OnuState.SEM_RESPOSTA || it.state == OnuState.ERRO }
+        val waiting = total - responding - unstable - noResponse
         val sent = rows.sumOf { it.tx.toLong() }
         val received = rows.sumOf { it.rx.toLong() }
         val loss = if (sent == 0L) 0.0 else (sent - received) * 100.0 / sent
 
-        fun withPercent(count: Int): String =
-            if (total == 0) "$count" else "$count (${formatPercent(count * 100.0 / total)}%)"
-
-        statTotal.text = "$total"
-        statResponding.text = withPercent(responding)
-        statNoResponse.text = withPercent(noResponse)
-        statNoResponse.setTextColor(if (noResponse > 0) ui.red else ui.white)
+        statResponding.text = "$responding"
         statResponding.setTextColor(if (responding > 0) ui.green else ui.white)
+        statTotal.text = "de $total"
+        statPercent.text = if (total == 0) "respondendo" else "${formatPercent(responding * 100.0 / total)}% respondendo"
+        summaryBar.set(
+            intArrayOf(responding, unstable, noResponse, waiting),
+            intArrayOf(ui.green, ui.orange, ui.red, Color.TRANSPARENT)
+        )
+        statNoResponse.text = "$noResponse"
+        statNoResponse.setTextColor(if (noResponse > 0) ui.red else ui.white)
         statSent.text = String.format(Locale("pt", "BR"), "%,d", sent)
         statReceived.text = String.format(Locale("pt", "BR"), "%,d", received)
         statLoss.text = "${formatPercent(loss)}%"
@@ -727,7 +764,7 @@ class CondoPage(
 
     private fun acquireBusy(): Boolean {
         if (busyHeld) return true
-        if (!host.acquire("Condomínio", ui.accent)) {
+        if (!host.acquire("Condomínio", ui.accentInk)) {
             Toast.makeText(activity, "Já existe um teste em andamento.", Toast.LENGTH_SHORT).show()
             return false
         }
@@ -924,7 +961,7 @@ class CondoPage(
     private fun setConsoleOpen(open: Boolean) {
         consoleOpen = open
         consoleBody.visibility = if (open) View.VISIBLE else View.GONE
-        consoleToggle.text = if (open) "▾ Console" else "▸ Console"
+        consoleChevron.animate().rotation(if (open) 0f else -90f).setDuration(160).start()
         if (open) {
             pendingChunk.clear()
             consoleOutput.text = consoleBuffer
@@ -956,7 +993,7 @@ class CondoPage(
             .setTitle("Console")
             .setSingleChoiceItems(options, selected) { dialog, which ->
                 consoleFilter = if (which == 0) null else ips[which - 1]
-                consoleFilterAction.text = consoleFilter?.substringAfter("$prefix.") ?: "TODAS"
+                consoleFilterAction.text = consoleFilter?.substringAfter("$prefix.") ?: "Todas"
                 rebuildConsole()
                 dialog.dismiss()
             }
@@ -1038,7 +1075,7 @@ class CondoPage(
         val dialog = AlertDialog.Builder(activity)
             .setTitle(if (editing == null) "Cadastro de ONU" else "Editar ONU")
             .setView(box)
-            .setPositiveButton(if (editing == null) "＋ Adicionar" else "Salvar", null)
+            .setPositiveButton(if (editing == null) "Adicionar" else "Salvar", null)
             .setNegativeButton(if (editing == null) "Fechar" else "Cancelar", null)
             .create()
         dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
@@ -1148,12 +1185,13 @@ class CondoPage(
         }
 
         fun show() {
-            output = ui.tv("", 12f, ui.text, mono = true).apply {
-                setPadding(ui.dp(10), ui.dp(6), ui.dp(10), ui.dp(6))
+            output = ui.tv("", 12f, ui.text).apply {
+                ui.code(this)
+                setPadding(ui.dp(12), ui.dp(8), ui.dp(12), ui.dp(8))
                 setTextIsSelectable(true)
             }
             scroll = ScrollView(activity).apply {
-                setBackgroundColor(ui.consoleBg)
+                background = ui.roundRect(ui.consoleBg, 14f, ui.panelStroke)
                 addView(output, ViewGroup.LayoutParams(-1, -2))
             }
             val box = LinearLayout(activity).apply {
@@ -1164,9 +1202,9 @@ class CondoPage(
             val name = if (row.identificacao.isEmpty()) "" else " (${row.identificacao})"
 
             dialog = AlertDialog.Builder(activity)
-                .setTitle("Ping — ${row.ip}$name")
+                .setTitle("Ping ${row.ip}$name")
                 .setView(box)
-                .setPositiveButton("■ Parar", null)
+                .setPositiveButton("Parar", null)
                 .setNegativeButton("Fechar", null)
                 .create()
             dialog.setOnDismissListener { close() }
@@ -1176,10 +1214,10 @@ class CondoPage(
             toggle.setOnClickListener {
                 if (loop.isRunning) {
                     loop.stop()
-                    toggle.text = "▶ Iniciar"
+                    toggle.text = "Iniciar"
                 } else {
                     loop.start()
-                    toggle.text = "■ Parar"
+                    toggle.text = "Parar"
                 }
             }
             loop.start()
