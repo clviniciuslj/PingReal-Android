@@ -1,4 +1,4 @@
-# Real Ping (Android)
+# PingLab (Android)
 
 App Android para ping, traceroute, diagnóstico de conexão e teste de velocidade, feito para uso em campo.
 
@@ -42,7 +42,7 @@ O app usa o `/system/bin/ping` do próprio Android; as respostas vêm do process
 
 ## Gerar o APK
 
-O workflow `.github/workflows/build-apk.yml` compila a cada push na `main` (ou manualmente em **Actions → Build Android APK → Run workflow**). Ao terminar, baixe o artefato **PingReal-APK** e instale o `app-debug.apk`.
+O workflow `.github/workflows/build-apk.yml` compila a cada push na `main` (ou manualmente em **Actions → Build Android APK → Run workflow**). Ao terminar, baixe o artefato **PingLab-APK** e instale o `app-debug.apk`.
 
 O APK é assinado sempre com a mesma chave (`app/pingreal.keystore`), então cada versão nova instala por cima da anterior, sem desinstalar e sem perder favoritos e histórico.
 

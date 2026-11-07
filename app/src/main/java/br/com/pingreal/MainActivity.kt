@@ -229,14 +229,14 @@ class MainActivity : Activity(), PageHost {
     }
 
     override fun copyText(text: String) {
-        getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Real Ping", text))
+        getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("PingLab", text))
         Toast.makeText(this, "Copiado", Toast.LENGTH_SHORT).show()
     }
 
     override fun shareImage(title: String, body: String, chart: LatencyChartView?) {
         try {
             val dir = File(cacheDir, "shared").apply { mkdirs() }
-            val file = File(dir, "pingreal_relatorio.png")
+            val file = File(dir, "pinglab_relatorio.png")
             FileOutputStream(file).use { out ->
                 buildReportBitmap(title, body, chart).compress(Bitmap.CompressFormat.PNG, 100, out)
             }
@@ -339,7 +339,7 @@ class MainActivity : Activity(), PageHost {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             addView(BrandMarkView(this@MainActivity), ui.lp(ui.dp(30), ui.dp(30)).apply { marginEnd = ui.dp(10) })
-            addView(ui.tv("Real Ping", 26f, ui.white).apply {
+            addView(ui.tv("PingLab", 26f, ui.white).apply {
                 typeface = Fonts.bold
                 letterSpacing = 0.01f
             })

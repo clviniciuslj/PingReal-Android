@@ -342,7 +342,7 @@ class DiagnosticEngine(private val context: Context) {
         conn.readTimeout = 6000
         conn.instanceFollowRedirects = false
         conn.useCaches = false
-        conn.setRequestProperty("User-Agent", "RealPing")
+        conn.setRequestProperty("User-Agent", "PingLab")
         val started = System.nanoTime()
         try {
             val code = conn.responseCode

@@ -400,7 +400,7 @@ class DiagnosticPage(
 
     // ------------------------------------------------------------------ relatório
 
-    private fun title() = "Real Ping — diagnóstico completo"
+    private fun title() = "PingLab — diagnóstico completo"
 
     private fun body(): String {
         val sb = StringBuilder()

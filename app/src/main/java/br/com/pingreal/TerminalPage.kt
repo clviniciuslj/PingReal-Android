@@ -867,7 +867,7 @@ class TerminalPage(
     // Compartilhar
     // =====================================================================
 
-    private fun reportTitle(): String = "Real Ping — relatório de ping"
+    private fun reportTitle(): String = "PingLab — relatório de ping"
 
     private fun reportBody(): String {
         val sb = StringBuilder()
