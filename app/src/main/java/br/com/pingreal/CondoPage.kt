@@ -264,7 +264,7 @@ class CondoPage(
         val totals = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
         fun metric(label: String): TextView {
             val value = ui.tv("0", 15f, ui.white, bold = true, mono = true).apply { maxLines = 1 }
-            totals.addView(ui.metric(label, value), ui.lp(0, -2, 1f))
+            totals.addView(ui.metric(label, value), ui.lp(0, -2, if (label == "Sem resposta") 1.35f else 1f))
             return value
         }
         statNoResponse = metric("Sem resposta")
@@ -293,13 +293,13 @@ class CondoPage(
         }
         searchInput = EditText(activity).apply {
             setSingleLine(true)
-            textSize = 15f
+            textSize = 14f
             typeface = Fonts.regular
             setTextColor(ui.white)
             setHintTextColor(ui.muted)
-            hint = "Buscar IP ou identificação"
+            hint = "Buscar IP ou nome"
             background = ui.field()
-            setPadding(ui.dp(16), 0, ui.dp(16), 0)
+            setPadding(ui.dp(14), 0, ui.dp(8), 0)
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             addTextChangedListener(object : TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}

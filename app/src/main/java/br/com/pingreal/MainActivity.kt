@@ -338,8 +338,8 @@ class MainActivity : Activity(), PageHost {
         val brand = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            addView(BrandMarkView(this@MainActivity), ui.lp(ui.dp(25), ui.dp(20)).apply { marginEnd = ui.dp(8) })
-            addView(ui.tv("Real Ping", 24f, ui.white).apply {
+            addView(BrandMarkView(this@MainActivity), ui.lp(ui.dp(30), ui.dp(30)).apply { marginEnd = ui.dp(10) })
+            addView(ui.tv("Real Ping", 26f, ui.white).apply {
                 typeface = Fonts.bold
                 letterSpacing = 0.01f
             })
@@ -358,7 +358,7 @@ class MainActivity : Activity(), PageHost {
         val center = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            addView(brand)
+            addView(brand, ui.lp(-2, -2))
             addView(status, ui.lp(-2, -2).apply { topMargin = ui.dp(1) })
         }
         header.addView(center, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))

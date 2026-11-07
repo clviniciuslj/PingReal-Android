@@ -7,7 +7,9 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.RadialGradient
 import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
@@ -374,36 +376,49 @@ class IconView(context: Context, private val kind: Int, private val sizeDp: Floa
     }
 }
 
-/** A marca: a linha do gráfico com a "cabeça" acesa (o mesmo desenho do ícone do app). */
+/** A marca: um splitter, uma fibra se dividindo em quatro com uma saída acesa (o mesmo desenho do ícone do app). */
 class BrandMarkView(context: Context) : View(context) {
-    private val density = resources.displayMetrics.density
-    private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
-        strokeWidth = 2.6f * density
-        color = Palette.accentInk
-    }
-    private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Palette.accentInk }
-    private val glow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(70, Color.red(Palette.accentInk), Color.green(Palette.accentInk), Color.blue(Palette.accentInk))
     }
     private val path = Path()
+    private val outputs = floatArrayOf(30f, 62f, 78f, 46f)  // a acesa (46) por último, por cima
 
     override fun onDraw(canvas: Canvas) {
-        // Desenho original numa área de 60 x 48 (x 26..86, y 30..78 do ícone de 108).
-        val sx = width / 60f
-        val sy = height / 48f
-        fun x(v: Float) = (v - 26f) * sx
-        fun y(v: Float) = (v - 30f) * sy
-        path.reset()
-        path.moveTo(x(30f), y(64f))
-        path.cubicTo(x(37f), y(64f), x(39f), y(52f), x(46f), y(52f))
-        path.cubicTo(x(53f), y(52f), x(54f), y(62f), x(60f), y(60f))
-        path.cubicTo(x(66f), y(58f), x(67f), y(44f), x(76f), y(42f))
-        canvas.drawPath(path, line)
-        canvas.drawCircle(x(76f), y(42f), 9f * sx, glow)
-        canvas.drawCircle(x(76f), y(42f), 5.5f * sx, dot)
+        // Coordenadas do ícone (área de 108).
+        val u = min(width, height) / 66f
+        fun x(v: Float) = width / 2f + (v - 52.25f) * u
+        fun y(v: Float) = height / 2f + (v - 54f) * u
+        val ink = Palette.white
+        val dim = Color.argb(64, Color.red(ink), Color.green(ink), Color.blue(ink))
+        val dimDot = Color.argb(128, Color.red(ink), Color.green(ink), Color.blue(ink))
+
+        paint.shader = null
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 3.5f * u
+        for (o in outputs) {
+            path.reset()
+            path.moveTo(x(30f), y(54f))
+            path.cubicTo(x(50f), y(54f), x(54f), y(o), x(76f), y(o))
+            paint.color = if (o == 46f) ink else dim
+            canvas.drawPath(path, paint)
+        }
+
+        paint.style = Paint.Style.FILL
+        if (Palette.isDark) {
+            paint.color = Color.WHITE
+            paint.shader = RadialGradient(x(76f), y(46f), 10f * u,
+                Color.argb(204, 255, 255, 255), Color.TRANSPARENT, Shader.TileMode.CLAMP)
+            canvas.drawCircle(x(76f), y(46f), 10f * u, paint)
+            paint.shader = null
+        }
+        for (o in outputs) {
+            paint.color = if (o == 46f) ink else dimDot
+            canvas.drawCircle(x(76f), y(o), (if (o == 46f) 5f else 4f) * u, paint)
+        }
+        paint.color = ink
+        canvas.drawCircle(x(30f), y(54f), 6.5f * u, paint)
     }
 }
 
