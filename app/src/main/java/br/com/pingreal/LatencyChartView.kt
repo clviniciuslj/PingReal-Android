@@ -243,7 +243,9 @@ class LatencyChartView(context: Context) : View(context) {
         canvas.drawLine(0f, bottom, w, bottom, gridPaint)
 
         if (series.all { it.samples.isEmpty() }) {
-            canvas.drawText(placeholder, w / 2f, (top + bottom) / 2f, emptyPaint)
+            // Centro de verdade: a linha-base vem das métricas da fonte, não do centro da área.
+            val metrics = emptyPaint.fontMetrics
+            canvas.drawText(placeholder, w / 2f, (top + bottom) / 2f - (metrics.ascent + metrics.descent) / 2f, emptyPaint)
             if (animating || live) scheduleFrame()
             return
         }

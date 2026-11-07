@@ -286,8 +286,8 @@ class TerminalPage(
             }
             true
         }
-        buttons.addView(runButton, ui.lp(0, ui.dp(52), 1f))
-        buttons.addView(traceButton, ui.lp(0, ui.dp(52), 1f).apply { marginStart = ui.dp(3) })
+        buttons.addView(runButton, ui.lp(0, ui.dp(44), 1f))
+        buttons.addView(traceButton, ui.lp(0, ui.dp(44), 1f).apply { marginStart = ui.dp(3) })
         view.addView(buttons, ui.lp(-1, -2).apply { topMargin = ui.dp(12) })
 
         // ---- gráfico (compacto, no meio) ----

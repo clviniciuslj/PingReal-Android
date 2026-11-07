@@ -61,6 +61,7 @@ class MainActivity : Activity(), PageHost {
     private val tabLabels = ArrayList<TextView>()
 
     private var busy = false
+    private var currentTab = 0
     private var importCallback: ((String) -> Unit)? = null
     private var backgroundedAt = 0L
     private var cachedNet = NetInfo.EMPTY
@@ -386,8 +387,8 @@ class MainActivity : Activity(), PageHost {
         // ---- barra de abas (pílula) ----
         nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            background = ui.roundRect(ui.panel, 28f, ui.panelStroke)
-            setPadding(ui.dp(6), ui.dp(6), ui.dp(6), ui.dp(6))
+            background = ui.roundRect(ui.panel, 24f, ui.panelStroke)
+            setPadding(ui.dp(4), ui.dp(4), ui.dp(4), ui.dp(4))
         }
         nav.addView(navItem(0, IconView.TERMINAL, "Terminal"), ui.lp(0, -2, 1f))
         nav.addView(navItem(1, IconView.DIAGNOSTIC, "Diagnóstico"), ui.lp(0, -2, 1f).apply { marginStart = ui.dp(4) })
@@ -397,7 +398,7 @@ class MainActivity : Activity(), PageHost {
 
     private fun navItem(index: Int, kind: Int, label: String): LinearLayout {
         val icon = IconView(this, kind)
-        val text = ui.medium(label, 12f, ui.muted).apply { gravity = Gravity.CENTER }
+        val text = ui.medium(label, 11f, ui.muted).apply { gravity = Gravity.CENTER }
         tabIcons.add(icon)
         tabLabels.add(text)
         val item = LinearLayout(this)
@@ -405,20 +406,21 @@ class MainActivity : Activity(), PageHost {
         return item.apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(0, ui.dp(8), 0, ui.dp(7))
+            setPadding(0, ui.dp(5), 0, ui.dp(4))
             isClickable = true
-            addView(icon, ui.lp(ui.dp(24), ui.dp(24)))
-            addView(text, ui.lp(-2, -2).apply { topMargin = ui.dp(3) })
+            addView(icon, ui.lp(ui.dp(20), ui.dp(20)))
+            addView(text, ui.lp(-2, -2).apply { topMargin = ui.dp(2) })
             setOnClickListener { selectTab(index) }
         }
     }
 
     private fun selectTab(index: Int) {
+        currentTab = index
         for ((i, page) in pages.withIndex()) page.visibility = if (i == index) View.VISIBLE else View.GONE
         for (i in tabIcons.indices) {
             val active = i == index
             val color = if (active) ui.accentInk else ui.muted
-            tabItems[i].background = ui.rippled(if (active) ui.softFill(ui.accent) else Color.TRANSPARENT, 22f)
+            tabItems[i].background = ui.rippled(if (active) ui.softFill(ui.accent) else Color.TRANSPARENT, 20f)
             tabIcons[i].color = color
             tabLabels[i].setTextColor(color)
             tabLabels[i].typeface = if (active) Fonts.semibold else Fonts.medium
@@ -441,7 +443,7 @@ class MainActivity : Activity(), PageHost {
             addView(ui.tv("Opções", 20f, ui.white, bold = true))
             addView(ui.tv("Versão ${versionName()}", 13f, ui.muted).apply { setPadding(0, ui.dp(2), 0, 0) })
         }
-        AlertDialog.Builder(this)
+        val builder = AlertDialog.Builder(this)
             .setCustomTitle(title)
             .setMultiChoiceItems(items, checked) { _, which, isChecked ->
                 val key = when (which) {
@@ -462,7 +464,9 @@ class MainActivity : Activity(), PageHost {
             }
             .setPositiveButton("OK") { _, _ -> if (themeChanged) recreate() }
             .setOnCancelListener { if (themeChanged) recreate() }
-            .show()
+        // Importar ONUs só faz sentido na aba Condomínio.
+        if (currentTab == 2) builder.setNeutralButton("Importar ONUs") { _, _ -> condo.startImport() }
+        builder.show()
     }
 
     // =====================================================================

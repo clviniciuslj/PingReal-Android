@@ -253,7 +253,7 @@ class UiKit(private val context: Context) {
 }
 
 /** Ícones desenhados em código (traço de 1,8 dp, cantos redondos), num quadrado centralizado de [sizeDp]. */
-class IconView(context: Context, private val kind: Int, private val sizeDp: Float = 24f) : View(context) {
+class IconView(context: Context, kind: Int, private val sizeDp: Float = 24f) : View(context) {
 
     companion object {
         const val TERMINAL = 0
@@ -264,7 +264,11 @@ class IconView(context: Context, private val kind: Int, private val sizeDp: Floa
         const val CHEVRON = 5
         const val EXPAND_ALL = 6
         const val COLLAPSE_ALL = 7
+        const val PLUS = 9
     }
+
+    var kind: Int = kind
+        set(value) { field = value; invalidate() }
 
     var color: Int = Palette.muted
         set(value) { field = value; invalidate() }
@@ -358,6 +362,10 @@ class IconView(context: Context, private val kind: Int, private val sizeDp: Floa
                 path.lineTo(x(0.50f), y(0.62f))
                 path.lineTo(x(0.72f), y(0.40f))
                 canvas.drawPath(path, paint)
+            }
+            PLUS -> {
+                canvas.drawLine(x(0.22f), y(0.5f), x(0.78f), y(0.5f), paint)
+                canvas.drawLine(x(0.5f), y(0.22f), x(0.5f), y(0.78f), paint)
             }
             EXPAND_ALL, COLLAPSE_ALL -> {
                 // Duas setas: para fora (expandir tudo) ou para dentro (recolher tudo).
