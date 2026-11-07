@@ -149,7 +149,7 @@ class TerminalPage(
     init {
         view = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         build()
-        hostInput.setText(host.prefs().getString(Prefs.HOST, "") ?: "")
+        // O campo começa sempre em branco; o último alvo só é usado para retomar o ping se o sistema matar o app.
         refreshButtons()
         updateStats()
     }
@@ -177,7 +177,10 @@ class TerminalPage(
     fun isPinging(): Boolean = run == Run.PING
 
     /** Retoma o último ping depois que o sistema encerrou o app em segundo plano. */
-    fun resumePing() = startPing()
+    fun resumePing() {
+        hostInput.setText(host.prefs().getString(Prefs.HOST, "") ?: "")
+        startPing()
+    }
 
     fun applyKeepScreen() {
         if (run == Run.PING) host.setKeepScreenOn(host.prefs().getBoolean(Prefs.KEEP_SCREEN, true))
