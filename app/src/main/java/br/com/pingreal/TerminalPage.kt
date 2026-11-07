@@ -296,7 +296,6 @@ class TerminalPage(
         chartSubtitle = ui.tv("últimos 60 s", 12f, ui.muted)
         val chartTitle = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
-            baselineAlignedChildIndex = 0
             addView(ui.tv("Latência", 15f, ui.white, bold = true))
             addView(chartSubtitle, ui.lp(-2, -2).apply { marginStart = ui.dp(8) })
         }
