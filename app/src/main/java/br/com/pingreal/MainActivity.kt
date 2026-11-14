@@ -53,6 +53,7 @@ class MainActivity : Activity(), PageHost {
     private lateinit var condo: CondoPage
     private lateinit var root: LinearLayout
     private lateinit var nav: LinearLayout
+    private lateinit var tabDots: LinearLayout
     private lateinit var statusText: TextView
     private lateinit var statusDot: GradientDrawable
     private val tabItems = ArrayList<LinearLayout>()
@@ -331,6 +332,7 @@ class MainActivity : Activity(), PageHost {
             v.setPadding(ui.dp(16) + pad[0], ui.dp(8) + pad[1], ui.dp(16) + pad[2], ui.dp(8) + pad[3])
             // Com o teclado aberto, a barra de abas só atrapalha.
             if (::nav.isInitialized) nav.visibility = if (imeHeight > ui.dp(120)) View.GONE else View.VISIBLE
+            if (::tabDots.isInitialized) tabDots.visibility = nav.visibility
             insets
         }
 
@@ -377,7 +379,8 @@ class MainActivity : Activity(), PageHost {
         terminal = TerminalPage(this, ui, this)
         diagnostic = DiagnosticPage(this, ui, this)
         condo = CondoPage(this, ui, this)
-        val frame = FrameLayout(this)
+        // Deslizar para os lados troca de aba.
+        val frame = SwipeFrame(this) { direction -> swipeTab(direction) }
         for (page in listOf(terminal.view, diagnostic.view, condo.view)) {
             frame.addView(page, FrameLayout.LayoutParams(-1, -1))
             pages.add(page)
@@ -393,7 +396,16 @@ class MainActivity : Activity(), PageHost {
         nav.addView(navItem(0, IconView.TERMINAL, "Terminal"), ui.lp(0, -2, 1f))
         nav.addView(navItem(1, IconView.DIAGNOSTIC, "Diagnóstico"), ui.lp(0, -2, 1f).apply { marginStart = ui.dp(4) })
         nav.addView(navItem(2, IconView.HOUSE, "Condomínio"), ui.lp(0, -2, 1f).apply { marginStart = ui.dp(4) })
-        root.addView(nav, ui.lp(-1, -2).apply { topMargin = ui.dp(10) })
+        // Pontinhos: em qual aba você está (e que dá para deslizar).
+        tabDots = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        repeat(pages.size) { i ->
+            tabDots.addView(View(this), ui.lp(ui.dp(6), ui.dp(6)).apply { if (i > 0) marginStart = ui.dp(6) })
+        }
+        root.addView(tabDots, ui.lp(-1, -2).apply { topMargin = ui.dp(8) })
+        root.addView(nav, ui.lp(-1, -2).apply { topMargin = ui.dp(6) })
     }
 
     private fun navItem(index: Int, kind: Int, label: String): LinearLayout {
@@ -425,7 +437,24 @@ class MainActivity : Activity(), PageHost {
             tabLabels[i].setTextColor(color)
             tabLabels[i].typeface = if (active) Fonts.semibold else Fonts.medium
         }
+        for (i in 0 until tabDots.childCount) {
+            val dot = tabDots.getChildAt(i)
+            val active = i == index
+            dot.layoutParams = (dot.layoutParams as LinearLayout.LayoutParams).apply { width = ui.dp(if (active) 18 else 6) }
+            dot.background = ui.roundRect(if (active) ui.accentInk else Palette.overlay(60), 3f)
+        }
         if (index != 0) terminal.hideKeyboard()
+    }
+
+    /** Deslize: +1 vai para a aba da direita, -1 para a da esquerda. A aba entra vindo do lado certo. */
+    private fun swipeTab(direction: Int) {
+        val next = currentTab + direction
+        if (next !in pages.indices) return
+        selectTab(next)
+        val page = pages[next]
+        page.translationX = direction * ui.dpf(48f)
+        page.alpha = 0f
+        page.animate().translationX(0f).alpha(1f).setDuration(140).start()
     }
 
     private fun showSettings() {

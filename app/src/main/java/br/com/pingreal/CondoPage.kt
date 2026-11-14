@@ -91,11 +91,13 @@ class CondoPage(
 
     private class GroupViews(
         val quadra: Int,
-        val chevron: IconView,
+        val ring: RingView,
         val flag: View,
         val summary: TextView,
         val button: Button,
-        val rowsBox: LinearLayout
+        val rowsBox: LinearLayout,
+        val failBox: TextView,
+        val card: LinearLayout
     ) {
         val rows = HashMap<String, RowViews>()
         var built = false
@@ -114,6 +116,8 @@ class CondoPage(
         private const val CONSOLE_TRIM = 200
         private const val FLUSH_MS = 250L
         private const val REBUILD_MIN_MS = 1000L
+
+        private const val MAX_FAIL_LINES = 3
 
         private fun formatTime(at: Long) = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(at))
 
@@ -156,14 +160,11 @@ class CondoPage(
     private var consoleFilter: String? = null
     private var consoleOpen = true
 
-    private lateinit var statTotal: TextView
     private lateinit var statResponding: TextView
     private lateinit var statNoResponse: TextView
-    private lateinit var statSent: TextView
-    private lateinit var statReceived: TextView
-    private lateinit var statLoss: TextView
-    private lateinit var statPercent: TextView
-    private lateinit var summaryBar: SegmentBar
+    private lateinit var summaryRing: RingView
+    private lateinit var statUnstable: TextView
+    private lateinit var statTotals: TextView
     private lateinit var consoleChevron: IconView
     private lateinit var pingAllButton: Button
     private lateinit var expandToggle: IconView
@@ -248,32 +249,42 @@ class CondoPage(
     // =====================================================================
 
     private fun build() {
-        // ---- resumo: quantas respondem, barra por estado e os totais ----
+        // ---- resumo: um anel com quantas respondem, por estado, e a legenda ao lado ----
         val summary = ui.card()
-        statResponding = ui.tv("0", 36f, ui.white, bold = true, mono = true)
-        statTotal = ui.tv("de 0", 18f, ui.muted, mono = true)
-        statPercent = ui.medium("respondendo", 13f, ui.muted)
-        val hero = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
+        summaryRing = RingView(activity).apply {
+            centerText = "0"
+            subText = "de 0"
+        }
+        fun legend(color: Int): TextView {
+            val dot = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(color)
+                setSize(ui.dp(9), ui.dp(9))
+            }
+            return ui.tv("", 14f, ui.white, bold = true).apply {
+                setCompoundDrawablesRelativeWithIntrinsicBounds(dot, null, null, null)
+                compoundDrawablePadding = ui.dp(8)
+                maxLines = 1
+            }
+        }
+        statResponding = legend(ui.green)
+        statUnstable = legend(ui.orange)
+        statNoResponse = legend(ui.red)
+        statTotals = ui.medium("", 12f, ui.muted)
+        val legendBox = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
             addView(statResponding)
-            addView(statTotal, ui.lp(-2, -2).apply { marginStart = ui.dp(8) })
-            addView(View(activity), ui.lp(0, 1, 1f))
-            addView(statPercent)
+            addView(statUnstable, ui.lp(-2, -2).apply { topMargin = ui.dp(6) })
+            addView(statNoResponse, ui.lp(-2, -2).apply { topMargin = ui.dp(6) })
+            addView(statTotals, ui.lp(-1, -2).apply { topMargin = ui.dp(8) })
         }
-        summary.addView(hero, ui.lp(-1, -2))
-        summaryBar = SegmentBar(activity)
-        summary.addView(summaryBar, ui.lp(-1, ui.dp(8)).apply { topMargin = ui.dp(8) })
-        val totals = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
-        fun metric(label: String): TextView {
-            val value = ui.tv("0", 15f, ui.white, bold = true, mono = true).apply { maxLines = 1 }
-            totals.addView(ui.metric(label, value), ui.lp(0, -2, if (label == "Sem resposta") 1.35f else 1f))
-            return value
+        val summaryRow = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(summaryRing, ui.lp(ui.dp(112), ui.dp(112)))
+            addView(legendBox, ui.lp(0, -2, 1f).apply { marginStart = ui.dp(18) })
         }
-        statNoResponse = metric("Sem resposta")
-        statSent = metric("Enviados")
-        statReceived = metric("Recebidos")
-        statLoss = metric("Perda")
-        summary.addView(totals, ui.lp(-1, -2).apply { topMargin = ui.dp(14) })
+        summary.addView(summaryRow, ui.lp(-1, -2))
         view.addView(summary, ui.lp(-1, -2))
 
         // ---- ações: pingar tudo, só erros, abrir/fechar as quadras e cadastrar ----
@@ -540,9 +551,9 @@ class CondoPage(
     private fun buildGroup(quadra: Int): View {
         val gs = groups.getOrPut(quadra) { GroupState() }
 
-        val chevron = IconView(activity, IconView.CHEVRON, 18f).apply {
-            color = ui.muted
-            rotation = if (gs.expanded) 0f else -90f
+        val ring = RingView(activity).apply {
+            strokeDp = 4.5f
+            centerSp = 13f
         }
         val flag = View(activity).apply {
             background = GradientDrawable().apply {
@@ -553,7 +564,7 @@ class CondoPage(
             contentDescription = "Último ping da quadra teve perda"
             setOnClickListener { showFailureDialog(quadra) }
         }
-        val summary = ui.tv("", 13f, ui.muted).apply { setPadding(ui.dp(26), ui.dp(1), 0, 0) }
+        val summary = ui.tv("", 13f, ui.muted).apply { setPadding(0, ui.dp(1), 0, 0) }
         val button = ui.button("Pingar quadra", ui.softFill(ui.accent), ui.accentInk) { toggleQuadraPing(quadra) }
         button.textSize = 13f
         button.setPadding(ui.dp(12), 0, ui.dp(12), 0)
@@ -561,14 +572,20 @@ class CondoPage(
             orientation = LinearLayout.VERTICAL
             visibility = if (gs.expanded) View.VISIBLE else View.GONE
         }
-        val gv = GroupViews(quadra, chevron, flag, summary, button, rowsBox)
+        // Lotes sem resposta, à vista mesmo com a quadra fechada.
+        val failBox = ui.medium("", 12.5f, ui.red).apply {
+            setPadding(ui.dp(14), 0, ui.dp(14), ui.dp(10))
+            setLineSpacing(ui.dpf(3f), 1f)
+            visibility = View.GONE
+        }
+        val card = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        val gv = GroupViews(quadra, ring, flag, summary, button, rowsBox, failBox, card)
         groupViews[quadra] = gv
 
         val top = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        top.addView(chevron, ui.lp(ui.dp(20), ui.dp(20)).apply { marginEnd = ui.dp(6) })
         top.addView(ui.tv("Quadra $quadra", 16f, ui.white, bold = true), ui.lp(-2, -2))
         top.addView(flag, ui.lp(ui.dp(9), ui.dp(9)).apply { marginStart = ui.dp(8) })
 
@@ -585,16 +602,14 @@ class CondoPage(
             background = ui.rippled(Color.TRANSPARENT, 18f)
             isClickable = true
             setOnClickListener { toggleExpanded(quadra) }
+            addView(ring, ui.lp(ui.dp(38), ui.dp(38)).apply { marginEnd = ui.dp(12) })
             addView(left, ui.lp(0, -2, 1f))
             addView(button, ui.lp(-2, ui.dp(32)).apply { marginStart = ui.dp(8) })
         }
 
-        val card = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            background = ui.roundRect(ui.panel, 18f, ui.panelStroke)
-            addView(header, ui.lp(-1, -2))
-            addView(rowsBox, ui.lp(-1, -2))
-        }
+        card.addView(header, ui.lp(-1, -2))
+        card.addView(failBox, ui.lp(-1, -2))
+        card.addView(rowsBox, ui.lp(-1, -2))
         if (gs.expanded) buildRows(gv)
         refreshGroup(quadra)
         return card
@@ -604,9 +619,9 @@ class CondoPage(
         val gs = groups[quadra] ?: return
         val gv = groupViews[quadra] ?: return
         gs.expanded = !gs.expanded
-        gv.chevron.animate().rotation(if (gs.expanded) 0f else -90f).setDuration(160).start()
         gv.rowsBox.visibility = if (gs.expanded) View.VISIBLE else View.GONE
         if (gs.expanded && !gv.built) buildRows(gv)
+        refreshGroup(quadra)
         updateExpandIcon()
     }
 
@@ -694,11 +709,31 @@ class CondoPage(
 
         // Só mostra o que tem problema, para o resumo caber numa linha ao lado do botão.
         val count = if (list.size == 1) "1 ONU" else "${list.size} ONUs"
-        val sb = StringBuilder("$count, $online online")
+        // O anel já mostra quantas respondem; o texto só diz o que tem problema, para caber numa linha.
+        val sb = StringBuilder(count)
+        if (down == 0 && unstable == 0) sb.append(if (online == list.size) ", todas online" else ", $online online")
         if (down > 0) sb.append(", $down sem resposta")
         if (unstable > 0) sb.append(", $unstable instável(is)")
         gv.summary.text = sb.toString()
         gv.flag.visibility = if (gs.failures.isNotEmpty()) View.VISIBLE else View.GONE
+
+        gv.ring.set(
+            intArrayOf(online, unstable, down, list.size - online - unstable - down),
+            intArrayOf(ui.green, ui.orange, ui.red, Color.TRANSPARENT)
+        )
+        gv.ring.centerText = "$online"
+        gv.card.background = ui.roundRect(ui.panel, 18f, if (down > 0) ui.tint(ui.red, 150) else ui.panelStroke)
+
+        // Quadra fechada e com ONU fora: mostra quais são, sem precisar abrir.
+        val downRows = list.filter { it.state == OnuState.SEM_RESPOSTA || it.state == OnuState.ERRO }
+        if (!gs.expanded && downRows.isNotEmpty()) {
+            val lines = downRows.take(MAX_FAIL_LINES).map { "Lote ${it.onu.lote} · ${it.ip} · ${it.statusText.lowercase()}" }
+            val more = downRows.size - MAX_FAIL_LINES
+            gv.failBox.text = (if (more > 0) lines + "e mais $more" else lines).joinToString("\n")
+            gv.failBox.visibility = View.VISIBLE
+        } else {
+            gv.failBox.visibility = View.GONE
+        }
     }
 
     private fun updateSummary() {
@@ -711,19 +746,18 @@ class CondoPage(
         val received = rows.sumOf { it.rx.toLong() }
         val loss = if (sent == 0L) 0.0 else (sent - received) * 100.0 / sent
 
-        statResponding.text = "$responding"
-        statResponding.setTextColor(if (responding > 0) ui.green else ui.white)
-        statTotal.text = "de $total"
-        statPercent.text = if (total == 0) "respondendo" else "${formatPercent(responding * 100.0 / total)}% respondendo"
-        summaryBar.set(
+        summaryRing.set(
             intArrayOf(responding, unstable, noResponse, waiting),
             intArrayOf(ui.green, ui.orange, ui.red, Color.TRANSPARENT)
         )
-        statNoResponse.text = "$noResponse"
-        statNoResponse.setTextColor(if (noResponse > 0) ui.red else ui.white)
-        statSent.text = String.format(Locale("pt", "BR"), "%,d", sent)
-        statReceived.text = String.format(Locale("pt", "BR"), "%,d", received)
-        statLoss.text = "${formatPercent(loss)}%"
+        summaryRing.centerText = "$responding"
+        summaryRing.subText = "de $total"
+        statResponding.text = "$responding respondendo"
+        statUnstable.text = if (unstable == 1) "1 instável" else "$unstable instáveis"
+        statNoResponse.text = "$noResponse sem resposta"
+        statTotals.text = String.format(
+            Locale("pt", "BR"), "Enviados %,d · Recebidos %,d · Perda %s%%", sent, received, formatPercent(loss)
+        )
     }
 
     // =====================================================================

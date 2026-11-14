@@ -40,6 +40,9 @@ class DiagnosticPage(
     private var lastAt: Date? = null
 
     private lateinit var diagButton: Button
+    private lateinit var diagRing: RingView
+    private lateinit var verdictPill: TextView
+    private lateinit var verdictText: TextView
     private lateinit var speedButton: Button
     private lateinit var shareButton: Button
     private lateinit var gauge: GaugeView
@@ -50,7 +53,8 @@ class DiagnosticPage(
 
     init {
         val content = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
-        content.addView(buildDiagnosticCard(), ui.lp(-1, -2))
+        content.addView(buildVerdictCard(), ui.lp(-1, -2))
+        content.addView(buildDiagnosticCard(), ui.lp(-1, -2).apply { topMargin = ui.dp(12) })
         content.addView(buildSpeedCard(), ui.lp(-1, -2).apply { topMargin = ui.dp(12) })
 
         shareButton = ui.button("Enviar relatório", ui.softFill(ui.accent), ui.accentInk) { showShareDialog() }
@@ -63,9 +67,53 @@ class DiagnosticPage(
             addView(content)
         }
         refreshButtons()
+        updateVerdict()
     }
 
     // ------------------------------------------------------------------ construção
+
+    /** O resumo no topo: um anel com quantas etapas passaram e o veredito em uma frase. */
+    private fun buildVerdictCard(): View {
+        diagRing = RingView(activity).apply { centerText = "0" }
+        verdictPill = ui.tv("", 13f, ui.white, bold = true).apply { setPadding(ui.dp(12), ui.dp(5), ui.dp(12), ui.dp(5)) }
+        verdictText = ui.medium("", 14f, ui.text).apply { setLineSpacing(ui.dpf(2f), 1f) }
+        val column = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(verdictPill, ui.lp(-2, -2))
+            addView(verdictText, ui.lp(-1, -2).apply { topMargin = ui.dp(8) })
+        }
+        return ui.card().apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            addView(diagRing, ui.lp(ui.dp(104), ui.dp(104)))
+            addView(column, ui.lp(0, -2, 1f).apply { marginStart = ui.dp(18) })
+        }
+    }
+
+    private fun updateVerdict() {
+        val steps = DiagnosticEngine.STEP_TITLES.map { (id, _) -> id to (rows[id]?.status ?: Status.PENDING) }
+        val ok = steps.count { it.second == Status.OK }
+        val warn = steps.count { it.second == Status.WARN }
+        val fail = steps.count { it.second == Status.FAIL }
+        diagRing.set(
+            intArrayOf(ok, warn, fail, steps.size - ok - warn - fail),
+            intArrayOf(ui.green, ui.orange, ui.red, 0)
+        )
+        diagRing.centerText = "$ok"
+        diagRing.subText = "de ${steps.size}"
+
+        val verdict = DiagnosticVerdict.of(steps, diagRunning)
+        val color = when (verdict.tone) {
+            Status.OK -> ui.green
+            Status.WARN -> ui.orange
+            Status.FAIL -> ui.red
+            else -> ui.muted
+        }
+        verdictPill.text = verdict.label
+        verdictPill.setTextColor(color)
+        verdictPill.background = ui.roundRect(ui.softFill(color), 999f)
+        verdictText.text = verdict.text
+    }
 
     private fun buildDiagnosticCard(): View {
         val card = ui.card().apply { setPadding(ui.dp(16), ui.dp(16), ui.dp(16), ui.dp(6)) }
@@ -209,6 +257,7 @@ class DiagnosticPage(
         if (tip != null) {
             row.tip.background = ui.roundRect(ui.softFill(if (step.status == Status.FAIL) ui.red else ui.orange), 12f)
         }
+        if (::diagRing.isInitialized) updateVerdict()
     }
 
     /** Uma sugestão do que pode ser, para cada etapa que falhou ou ficou com aviso. */
@@ -288,6 +337,7 @@ class DiagnosticPage(
         diagRunning = false
         host.release()
         refreshButtons()
+        updateVerdict()
 
         if (cancelled || report == null) {
             for ((id, title) in DiagnosticEngine.STEP_TITLES) {
