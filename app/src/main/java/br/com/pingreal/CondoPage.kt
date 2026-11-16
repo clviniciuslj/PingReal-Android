@@ -850,7 +850,9 @@ class CondoPage(
             gs.job?.cancel()
             return
         }
-        val ips = rows.filter { it.onu.quadra == quadra }.sortedBy { it.onu.lote }.map { it.ip }
+        val targets = rows.filter { it.onu.quadra == quadra }.sortedBy { it.onu.lote }
+        val ips = targets.map { it.ip }
+        val onuByIp = targets.associate { it.ip to it.onu }
         if (ips.isEmpty()) return
         if (!acquireBusy()) return
 
@@ -864,7 +866,12 @@ class CondoPage(
             intervalMs = CondoDefaults.QUADRA_PING_INTERVAL_MS,
             timeoutMs = CondoDefaults.TIMEOUT_MS,
             concurrency = CondoDefaults.CONCURRENCY,
-            onLine = { l -> extraConsole.add(lineOf(l)) },
+            // Cada resposta passa pela mesma regra do "Pingar tudo" (estado, contadores): o anel da quadra, os
+            // lotes e o resumo mudam ao vivo. A linha do console sai pelo mesmo caminho (sem duplicar).
+            onLine = { l ->
+                val onu = onuByIp[l.host]
+                if (onu != null) monitoring.record(onu, l.host, l.outcome, l.at) else extraConsole.add(lineOf(l))
+            },
             onSummary = { s -> extraConsole.add(summaryLine(quadra, s)) },
             onDone = { done, cancelled -> host.post { finishQuadraPing(quadra, ips.size, done, cancelled) } }
         )

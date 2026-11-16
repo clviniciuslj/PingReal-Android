@@ -176,6 +176,42 @@ class MonitoringServiceTest {
     }
 
     @Test
+    fun pingsFromPingarQuadraUseTheSameRuleAndCounters() {
+        val samples = Collections.synchronizedList(ArrayList<OnuSample>())
+        val service = MonitoringService(FakePinger()) { samples.add(it) }
+        service.options = options()
+        val onu = Onu.create(3, 4)
+        val ip = "172.16.3.4"
+
+        // "Pingar quadra" com o monitoramento parado: 1 resposta e 3 falhas seguidas
+        service.record(onu, ip, OK)
+        service.record(onu, ip, TIMEOUT)
+        service.record(onu, ip, TIMEOUT)
+        service.record(onu, ip, TIMEOUT)
+        assertEquals(
+            listOf(OnuState.ONLINE, OnuState.INSTAVEL, OnuState.INSTAVEL, OnuState.SEM_RESPOSTA),
+            samples.map { it.snapshot.state }
+        )
+        assertEquals(4, samples.last().snapshot.tx)
+        assertEquals(1, samples.last().snapshot.rx)
+        assertEquals(1, samples.count { it.event == OnuEventKind.QUEDA })
+
+        // O "Pingar tudo" continua do mesmo estado e dos mesmos contadores (não recomeça do zero)
+        service.start(listOf(onu))
+        assertTrue(waitUntil { samples.size >= 5 })
+        service.stop()
+        assertEquals(5, samples[4].snapshot.tx)
+        assertEquals(OnuEventKind.RECUPERACAO, samples[4].event)
+
+        // "Limpar resultados" (forget) zera: a próxima resposta começa a contar do 1
+        service.forget(onu.id)
+        samples.clear()
+        service.record(onu, ip, TIMEOUT)
+        assertEquals(1, samples.single().snapshot.tx)
+        assertEquals(OnuState.INSTAVEL, samples.single().snapshot.state)
+    }
+
+    @Test
     fun countsTxRxAndLatency() {
         val samples = Collections.synchronizedList(ArrayList<OnuSample>())
         val service = MonitoringService(FakePinger { _, n -> if (n % 2 == 0) TIMEOUT else OK }) { samples.add(it) }

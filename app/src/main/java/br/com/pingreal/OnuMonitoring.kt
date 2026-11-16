@@ -74,6 +74,16 @@ class MonitoringService(
         synchronized(sync) { runtimes.remove(onuId) }
     }
 
+    /**
+     * Resultado de um ping feito fora do monitoramento (ex.: "Pingar quadra"): passa pela mesma regra das
+     * 3 falhas e pelos mesmos contadores da ONU, e sai pelo [onSample] como se fosse do monitoramento.
+     * Funciona com o monitoramento parado ou rodando.
+     */
+    fun record(onu: Onu, ip: String, outcome: PingOutcome, at: Long = System.currentTimeMillis()) {
+        val runtime = synchronized(sync) { runtimes.getOrPut(onu.id) { Runtime() } }
+        emit(onu, ip, runtime, outcome, at)
+    }
+
     fun stop() {
         val toCancel: List<Loop>
         val sched: ScheduledThreadPoolExecutor?
@@ -137,7 +147,13 @@ class MonitoringService(
         // voo (remover/parar) nunca altera o estado que o loop novo da mesma ONU já está usando.
         synchronized(loop.gate) {
             if (loop.cancelled) return
-            val rt = loop.runtime
+            emit(loop.onu, loop.ip, loop.runtime, outcome, at)
+        }
+    }
+
+    /** Aplica um resultado ao estado da ONU. O lock é o próprio estado: o loop e o [record] não se atropelam. */
+    private fun emit(onu: Onu, ip: String, rt: Runtime, outcome: PingOutcome, at: Long) {
+        synchronized(rt) {
             val kind = rt.machine.apply(outcome)
             rt.tx++
             if (outcome.success) {
@@ -148,7 +164,7 @@ class MonitoringService(
                 rt.machine.state, rt.tx, rt.rx,
                 if (outcome.success) outcome.latencyMs else null, rt.lastResponse
             )
-            onSample(OnuSample(loop.onu, loop.ip, outcome, snapshot, kind, at))
+            onSample(OnuSample(onu, ip, outcome, snapshot, kind, at))
         }
     }
 
