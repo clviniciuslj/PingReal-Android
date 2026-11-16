@@ -45,6 +45,15 @@ android {
             signingConfig = signingConfigs.getByName("pingreal")
         }
     }
+
+    // O APK sai como "PingReal-v.<versão>.apk" (ex.: PingReal-v.1.19.apk) em vez de app-debug.apk.
+    applicationVariants.all {
+        val variant = this
+        outputs.all {
+            (this as com.android.build.gradle.internal.api.BaseVariantOutputImpl).outputFileName =
+                "PingReal-v.${variant.versionName}.apk"
+        }
+    }
 }
 
 dependencies {
@@ -52,4 +61,6 @@ dependencies {
     implementation("androidx.core:core:1.13.1")
 
     testImplementation("junit:junit:4.13.2")
+    // Nos testes (fora do Android) o org.json do sistema não existe; esta é a mesma biblioteca para a JVM.
+    testImplementation("org.json:json:20231013")
 }
