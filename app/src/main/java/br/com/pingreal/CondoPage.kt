@@ -96,7 +96,6 @@ class CondoPage(
         val summary: TextView,
         val button: Button,
         val rowsBox: LinearLayout,
-        val failBox: TextView,
         val card: LinearLayout
     ) {
         val rows = HashMap<String, RowViews>()
@@ -116,8 +115,6 @@ class CondoPage(
         private const val CONSOLE_TRIM = 200
         private const val FLUSH_MS = 250L
         private const val REBUILD_MIN_MS = 1000L
-
-        private const val MAX_FAIL_LINES = 3
 
         private fun formatTime(at: Long) = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(at))
 
@@ -167,6 +164,7 @@ class CondoPage(
     private lateinit var statTotals: TextView
     private lateinit var consoleChevron: IconView
     private lateinit var pingAllButton: Button
+    private lateinit var clearResultsAction: TextView
     private lateinit var expandToggle: IconView
     private lateinit var errorsToggle: TextView
     private lateinit var listBox: LinearLayout
@@ -271,12 +269,15 @@ class CondoPage(
         statUnstable = legend(ui.orange)
         statNoResponse = legend(ui.red)
         statTotals = ui.medium("", 12f, ui.muted)
+        clearResultsAction = ui.textAction("Limpar resultados") { clearAllResults() }
         val legendBox = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             addView(statResponding)
             addView(statUnstable, ui.lp(-2, -2).apply { topMargin = ui.dp(6) })
             addView(statNoResponse, ui.lp(-2, -2).apply { topMargin = ui.dp(6) })
             addView(statTotals, ui.lp(-1, -2).apply { topMargin = ui.dp(8) })
+            // O texto do botão alinha com a legenda (o recuo interno dele é de 12 dp).
+            addView(clearResultsAction, ui.lp(-2, -2).apply { topMargin = ui.dp(2); marginStart = -ui.dp(12) })
         }
         val summaryRow = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -417,6 +418,7 @@ class CondoPage(
             ui.primary(pingAllButton)
         }
         ui.setEnabled(pingAllButton, canStart)
+        ui.setEnabled(clearResultsAction, activeCount() == 0)
         for ((quadra, gv) in groupViews) {
             val gs = groups[quadra] ?: continue
             gv.button.text = if (gs.pinging) "Cancelar" else "Pingar quadra"
@@ -572,14 +574,8 @@ class CondoPage(
             orientation = LinearLayout.VERTICAL
             visibility = if (gs.expanded) View.VISIBLE else View.GONE
         }
-        // Lotes sem resposta, à vista mesmo com a quadra fechada.
-        val failBox = ui.medium("", 12.5f, ui.red).apply {
-            setPadding(ui.dp(14), 0, ui.dp(14), ui.dp(10))
-            setLineSpacing(ui.dpf(3f), 1f)
-            visibility = View.GONE
-        }
         val card = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
-        val gv = GroupViews(quadra, ring, flag, summary, button, rowsBox, failBox, card)
+        val gv = GroupViews(quadra, ring, flag, summary, button, rowsBox, card)
         groupViews[quadra] = gv
 
         val top = LinearLayout(activity).apply {
@@ -608,7 +604,6 @@ class CondoPage(
         }
 
         card.addView(header, ui.lp(-1, -2))
-        card.addView(failBox, ui.lp(-1, -2))
         card.addView(rowsBox, ui.lp(-1, -2))
         if (gs.expanded) buildRows(gv)
         refreshGroup(quadra)
@@ -722,18 +717,8 @@ class CondoPage(
             intArrayOf(ui.green, ui.orange, ui.red, Color.TRANSPARENT)
         )
         gv.ring.centerText = "$online"
-        gv.card.background = ui.roundRect(ui.panel, 18f, if (down > 0) ui.tint(ui.red, 150) else ui.panelStroke)
-
-        // Quadra fechada e com ONU fora: mostra quais são, sem precisar abrir.
-        val downRows = list.filter { it.state == OnuState.SEM_RESPOSTA || it.state == OnuState.ERRO }
-        if (!gs.expanded && downRows.isNotEmpty()) {
-            val lines = downRows.take(MAX_FAIL_LINES).map { "Lote ${it.onu.lote} · ${it.ip} · ${it.statusText.lowercase()}" }
-            val more = downRows.size - MAX_FAIL_LINES
-            gv.failBox.text = (if (more > 0) lines + "e mais $more" else lines).joinToString("\n")
-            gv.failBox.visibility = View.VISIBLE
-        } else {
-            gv.failBox.visibility = View.GONE
-        }
+        // Quem tem problema aparece só no anel (vermelho/laranja proporcional); os lotes, ao abrir a quadra ou em Erros.
+        gv.card.background = ui.roundRect(ui.panel, 18f, ui.panelStroke)
     }
 
     private fun updateSummary() {
@@ -819,6 +804,23 @@ class CondoPage(
             host.release()
         }
         updateControls()
+    }
+
+    /**
+     * "Limpar resultados": todas as ONUs voltam para "Aguardando", os contadores zeram, o resultado do último
+     * "Pingar quadra" some e o console é limpo. As ONUs cadastradas ficam. Só quando nenhum ping está rodando.
+     */
+    private fun clearAllResults() {
+        if (activeCount() > 0) return
+        sampleQueue.clear()
+        for (row in rows) {
+            row.reset()
+            monitoring.forget(row.onu.id)
+        }
+        for (gs in groups.values) gs.failures = emptyList()
+        clearConsole()
+        rebuildList()
+        updateSummary()
     }
 
     private fun toggleMonitoring() {

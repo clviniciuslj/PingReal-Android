@@ -253,7 +253,7 @@ class TerminalPage(
         }
         inputRow.addView(hostInput, ui.lp(0, ui.dp(52), 1f))
         inputRow.addView(favButton, ui.lp(ui.dp(48), ui.dp(52)))
-        view.addView(inputRow, ui.lp(-1, -2))
+        // O campo, os atalhos e os botões entram no fim da tela (perto do polegar); veja o final de build().
 
         // ---- atalhos (gateway, DNS, favoritos, recentes) ----
         chipsRow = LinearLayout(activity).apply {
@@ -265,7 +265,6 @@ class TerminalPage(
             overScrollMode = View.OVER_SCROLL_NEVER
             addView(chipsRow, ViewGroup.LayoutParams(-2, -2))
         }
-        view.addView(chipsScroll, ui.lp(-1, -2).apply { topMargin = ui.dp(10) })
 
         // ---- Iniciar | Traceroute: uma barra dividida em duas metades iguais ----
         val buttons = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
@@ -291,7 +290,6 @@ class TerminalPage(
         }
         buttons.addView(runButton, ui.lp(0, ui.dp(44), 1f))
         buttons.addView(traceButton, ui.lp(0, ui.dp(44), 1f).apply { marginStart = ui.dp(3) })
-        view.addView(buttons, ui.lp(-1, -2).apply { topMargin = ui.dp(12) })
 
         // ---- gráfico (compacto, no meio) ----
         val chartCard = ui.card().apply { setPadding(ui.dp(16), ui.dp(12), ui.dp(16), ui.dp(12)) }
@@ -329,7 +327,7 @@ class TerminalPage(
             visibility = View.GONE
         }
         chartCard.addView(multiBox, ui.lp(-1, -2))
-        view.addView(chartCard, ui.lp(-1, -2).apply { topMargin = ui.dp(12) })
+        view.addView(chartCard, ui.lp(-1, -2))
 
         // ---- console (ocupa o resto da tela) ----
         val consoleCard = LinearLayout(activity).apply {
@@ -365,6 +363,11 @@ class TerminalPage(
             setPadding(ui.dp(4), 0, ui.dp(4), 0)
         }
         view.addView(netLine, ui.lp(-1, -2).apply { topMargin = ui.dp(8) })
+
+        // ---- embaixo: atalhos, campo do alvo e Iniciar | Traceroute ----
+        view.addView(chipsScroll, ui.lp(-1, -2).apply { topMargin = ui.dp(8) })
+        view.addView(inputRow, ui.lp(-1, -2).apply { topMargin = ui.dp(10) })
+        view.addView(buttons, ui.lp(-1, -2).apply { topMargin = ui.dp(12) })
     }
 
     private fun refreshButtons() {

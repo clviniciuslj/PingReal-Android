@@ -2,7 +2,13 @@ package br.com.pingreal
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.Dialog
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
+import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
+import android.view.Window
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -13,14 +19,25 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
 
-/** Aba "Diagnóstico": diagnóstico em etapas (linha do tempo) e teste de velocidade. */
+/**
+ * Aba "Diagnóstico": o resultado em cima, as etapas numa lista que abre com um toque (a que tem problema
+ * já abre com a dica) e, fixos embaixo, Iniciar diagnóstico e os ícones do teste de velocidade e do relatório.
+ */
 class DiagnosticPage(
     private val activity: Activity,
     private val ui: UiKit,
     private val host: PageHost
 ) {
-    private class Row(val badge: StatusBadgeView, val detail: TextView, val tip: TextView) {
+    private class Row(
+        val badge: StatusBadgeView,
+        val word: TextView,
+        val chevron: IconView,
+        val more: View,
+        val detail: TextView,
+        val tip: TextView
+    ) {
         var status = Status.PENDING
+        var open = false
     }
 
     val view: View
@@ -40,11 +57,11 @@ class DiagnosticPage(
     private var lastAt: Date? = null
 
     private lateinit var diagButton: Button
-    private lateinit var diagRing: RingView
-    private lateinit var verdictPill: TextView
+    private lateinit var verdictTitle: TextView
     private lateinit var verdictText: TextView
+    private lateinit var speedSheetView: View
+    private var speedDialog: Dialog? = null
     private lateinit var speedButton: Button
-    private lateinit var shareButton: Button
     private lateinit var gauge: GaugeView
     private lateinit var speedDown: TextView
     private lateinit var speedUp: TextView
@@ -53,123 +70,145 @@ class DiagnosticPage(
 
     init {
         val content = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
-        content.addView(buildVerdictCard(), ui.lp(-1, -2))
-        content.addView(buildDiagnosticCard(), ui.lp(-1, -2).apply { topMargin = ui.dp(12) })
-        content.addView(buildSpeedCard(), ui.lp(-1, -2).apply { topMargin = ui.dp(12) })
-
-        shareButton = ui.button("Enviar relatório", ui.softFill(ui.accent), ui.accentInk) { showShareDialog() }
-        shareButton.visibility = View.GONE
-        content.addView(shareButton, ui.lp(-1, ui.dp(52)).apply { topMargin = ui.dp(12) })
+        content.addView(buildVerdict(), ui.lp(-1, -2))
+        content.addView(buildList(), ui.lp(-1, -2).apply { topMargin = ui.dp(4) })
         content.addView(View(activity), ui.lp(-1, ui.dp(8)))
 
-        view = ScrollView(activity).apply {
+        // A lista rola; os botões ficam fixos embaixo, como no Terminal.
+        val scroll = ScrollView(activity).apply {
             isVerticalScrollBarEnabled = false
             addView(content)
         }
+        view = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(scroll, ui.lp(-1, 0, 1f))
+            addView(buildActions(), ui.lp(-1, -2).apply { topMargin = ui.dp(12) })
+        }
+        speedSheetView = buildSpeedSheet()
         refreshButtons()
         updateVerdict()
     }
 
     // ------------------------------------------------------------------ construção
 
-    /** O resumo no topo: um anel com quantas etapas passaram e o veredito em uma frase. */
-    private fun buildVerdictCard(): View {
-        diagRing = RingView(activity).apply { centerText = "0" }
-        verdictPill = ui.tv("", 13f, ui.white, bold = true).apply { setPadding(ui.dp(12), ui.dp(5), ui.dp(12), ui.dp(5)) }
-        verdictText = ui.medium("", 14f, ui.text).apply { setLineSpacing(ui.dpf(2f), 1f) }
-        val column = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(verdictPill, ui.lp(-2, -2))
-            addView(verdictText, ui.lp(-1, -2).apply { topMargin = ui.dp(8) })
+    /** O resultado em cima: o rótulo grande na cor do resultado e uma frase. */
+    private fun buildVerdict(): View {
+        verdictTitle = ui.tv("", 26f, ui.white, bold = true).apply { gravity = Gravity.CENTER }
+        verdictText = ui.tv("", 14f, ui.muted).apply {
+            gravity = Gravity.CENTER
+            setLineSpacing(ui.dpf(2f), 1f)
         }
-        return ui.card().apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = android.view.Gravity.CENTER_VERTICAL
-            addView(diagRing, ui.lp(ui.dp(104), ui.dp(104)))
-            addView(column, ui.lp(0, -2, 1f).apply { marginStart = ui.dp(18) })
+        return LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(ui.dp(10), ui.dp(6), ui.dp(10), ui.dp(14))
+            addView(verdictTitle, ui.lp(-1, -2))
+            addView(verdictText, ui.lp(-1, -2).apply { topMargin = ui.dp(6) })
         }
     }
 
     private fun updateVerdict() {
         val steps = DiagnosticEngine.STEP_TITLES.map { (id, _) -> id to (rows[id]?.status ?: Status.PENDING) }
-        val ok = steps.count { it.second == Status.OK }
-        val warn = steps.count { it.second == Status.WARN }
-        val fail = steps.count { it.second == Status.FAIL }
-        diagRing.set(
-            intArrayOf(ok, warn, fail, steps.size - ok - warn - fail),
-            intArrayOf(ui.green, ui.orange, ui.red, 0)
-        )
-        diagRing.centerText = "$ok"
-        diagRing.subText = "de ${steps.size}"
-
         val verdict = DiagnosticVerdict.of(steps, diagRunning)
         val color = when (verdict.tone) {
             Status.OK -> ui.green
             Status.WARN -> ui.orange
             Status.FAIL -> ui.red
-            else -> ui.muted
+            else -> ui.white
         }
-        verdictPill.text = verdict.label
-        verdictPill.setTextColor(color)
-        verdictPill.background = ui.roundRect(ui.softFill(color), 999f)
+        verdictTitle.text = verdict.label
+        verdictTitle.setTextColor(color)
         verdictText.text = verdict.text
     }
 
-    private fun buildDiagnosticCard(): View {
-        val card = ui.card().apply { setPadding(ui.dp(16), ui.dp(16), ui.dp(16), ui.dp(6)) }
-        card.addView(ui.title("Diagnóstico da rede").apply { gravity = android.view.Gravity.CENTER }, ui.lp(-1, -2).apply { bottomMargin = ui.dp(16) })
-        diagButton = ui.button("Iniciar diagnóstico", ui.accent, ui.onAccent) {
-            if (diagRunning) engine?.cancel() else startDiagnostic()
-        }
-
-        val steps = DiagnosticEngine.STEP_TITLES
-        for ((index, step) in steps.withIndex()) {
+    /** As 7 etapas: selo, nome, estado e uma seta; um toque abre o detalhe (e a dica, se houver). */
+    private fun buildList(): View {
+        val card = ui.card().apply { setPadding(ui.dp(16), ui.dp(4), ui.dp(16), ui.dp(4)) }
+        for ((index, step) in DiagnosticEngine.STEP_TITLES.withIndex()) {
             val (id, title) = step
-            val last = index == steps.lastIndex
-
-            // Trilho: o selo e a linha que liga à próxima etapa.
             val badge = StatusBadgeView(activity)
-            val rail = LinearLayout(activity).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = android.view.Gravity.CENTER_HORIZONTAL
+            val word = ui.tv("—", 13f, ui.muted, mono = true)
+            val chevron = IconView(activity, IconView.CHEVRON, 18f).apply { color = ui.muted; alpha = 0.7f }
+            val head = LinearLayout(activity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                minimumHeight = ui.dp(50)
+                background = ui.rippled(Color.TRANSPARENT, 12f)
+                isClickable = true
+                setOnClickListener { toggle(id) }
                 addView(badge, ui.lp(ui.dp(24), ui.dp(24)))
-                addView(View(activity).apply {
-                    setBackgroundColor(ui.panelStroke)
-                    visibility = if (last) View.INVISIBLE else View.VISIBLE
-                }, ui.lp(ui.dp(2), 0, 1f).apply { topMargin = ui.dp(4); bottomMargin = ui.dp(4) })
+                addView(ui.tv(title, 15f, ui.white, bold = true), ui.lp(0, -2, 1f).apply { marginStart = ui.dp(12) })
+                addView(word, ui.lp(-2, -2).apply { marginStart = ui.dp(8) })
+                addView(chevron, ui.lp(ui.dp(22), ui.dp(22)).apply { marginStart = ui.dp(6) })
             }
-
-            val detail = ui.tv("", 13f, ui.muted).apply { visibility = View.GONE }
+            val detail = ui.tv("Ainda não testado.", 13f, ui.muted).apply { setLineSpacing(ui.dpf(1.5f), 1f) }
             val tip = ui.tv("", 13f, ui.text).apply {
                 visibility = View.GONE
                 setPadding(ui.dp(12), ui.dp(10), ui.dp(12), ui.dp(10))
                 setLineSpacing(ui.dpf(1.5f), 1f)
             }
-            val text = LinearLayout(activity).apply {
+            val more = LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(0, ui.dp(2), 0, ui.dp(if (last) 10 else 16))
-                addView(ui.tv(title, 15f, ui.white, bold = true))
-                addView(detail, ui.lp(-1, -2).apply { topMargin = ui.dp(2) })
+                setPadding(ui.dp(36), 0, 0, ui.dp(12))
+                visibility = View.GONE
+                addView(detail, ui.lp(-1, -2))
                 addView(tip, ui.lp(-1, -2).apply { topMargin = ui.dp(8) })
             }
-
-            val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
-            row.addView(rail, ui.lp(ui.dp(24), -1))
-            row.addView(text, ui.lp(0, -2, 1f).apply { marginStart = ui.dp(14) })
-            card.addView(row, ui.lp(-1, -2))
-            rows[id] = Row(badge, detail, tip)
+            if (index > 0) card.addView(View(activity).apply { setBackgroundColor(ui.panelStroke) }, ui.lp(-1, 1))
+            card.addView(head, ui.lp(-1, -2))
+            card.addView(more, ui.lp(-1, -2))
+            rows[id] = Row(badge, word, chevron, more, detail, tip)
         }
-        // O botão fica embaixo, depois das etapas.
-        card.addView(diagButton, ui.lp(-1, ui.dp(52)).apply { topMargin = ui.dp(4); bottomMargin = ui.dp(10) })
         return card
     }
 
-    private fun buildSpeedCard(): View {
-        val card = ui.card().apply { setPadding(ui.dp(16), ui.dp(16), ui.dp(16), ui.dp(16)) }
-        card.addView(ui.title("Teste de velocidade").apply { gravity = android.view.Gravity.CENTER }, ui.lp(-1, -2))
+    private fun setOpen(row: Row, open: Boolean) {
+        row.open = open
+        row.more.visibility = if (open) View.VISIBLE else View.GONE
+        row.chevron.rotation = if (open) 180f else 0f
+    }
+
+    private fun toggle(id: String) {
+        val row = rows[id] ?: return
+        setOpen(row, !row.open)
+    }
+
+    /** Embaixo: Iniciar diagnóstico e dois ícones redondos (teste de velocidade e enviar relatório). */
+    private fun buildActions(): View {
+        diagButton = ui.button("Iniciar diagnóstico", ui.accent, ui.onAccent) {
+            if (diagRunning) engine?.cancel() else startDiagnostic()
+        }
+        fun round(kind: Int, label: String, onClick: () -> Unit) = IconView(activity, kind, 22f).apply {
+            color = ui.accentInk
+            background = ui.rippled(ui.panel, 26f, ui.panelStroke)
+            contentDescription = label
+            isClickable = true
+            setOnClickListener { onClick() }
+        }
+        return LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(diagButton, ui.lp(0, ui.dp(52), 1f))
+            addView(round(IconView.GAUGE, "Testar velocidade") {
+                openSpeedSheet()
+                if (!speedRunning) confirmSpeed()
+            }, ui.lp(ui.dp(52), ui.dp(52)).apply { marginStart = ui.dp(10) })
+            addView(round(IconView.SHARE, "Enviar relatório") { showShareDialog() },
+                ui.lp(ui.dp(52), ui.dp(52)).apply { marginStart = ui.dp(10) })
+        }
+    }
+
+    /** A folha do teste de velocidade: o velocímetro e os quatro números, como no cartão da 1.17. */
+    private fun buildSpeedSheet(): View {
+        val sheet = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            background = ui.cornerRect(ui.panel, floatArrayOf(24f, 24f, 0f, 0f), ui.panelStroke)
+            setPadding(ui.dp(20), ui.dp(10), ui.dp(20), ui.dp(20))
+        }
+        sheet.addView(View(activity).apply { background = ui.roundRect(Palette.overlay(60), 2f) },
+            ui.lp(ui.dp(36), ui.dp(4)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = ui.dp(14) })
+        sheet.addView(ui.title("Teste de velocidade").apply { gravity = Gravity.CENTER }, ui.lp(-1, -2))
 
         gauge = GaugeView(activity)
-        card.addView(gauge, ui.lp(-1, -2).apply { topMargin = ui.dp(10) })
+        sheet.addView(gauge, ui.lp(-1, -2).apply { topMargin = ui.dp(10) })
 
         val results = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
         fun cell(label: String): TextView {
@@ -181,13 +220,29 @@ class DiagnosticPage(
         speedUp = cell("Upload")
         speedPing = cell("Ping")
         speedJitter = cell("Jitter")
-        card.addView(results, ui.lp(-1, -2).apply { topMargin = ui.dp(6) })
+        sheet.addView(results, ui.lp(-1, -2).apply { topMargin = ui.dp(6) })
 
-        speedButton = ui.button("Testar velocidade", ui.softFill(ui.accent), ui.accentInk) {
-            if (speedRunning) speed?.cancel() else confirmSpeed()
+        speedButton = ui.button("Fechar", ui.softFill(ui.accent), ui.accentInk) {
+            if (speedRunning) speed?.cancel() else speedDialog?.dismiss()
         }
-        card.addView(speedButton, ui.lp(-1, ui.dp(52)).apply { topMargin = ui.dp(16) })
-        return card
+        sheet.addView(speedButton, ui.lp(-1, ui.dp(48)).apply { topMargin = ui.dp(16) })
+        return sheet
+    }
+
+    private fun openSpeedSheet() {
+        val dialog = speedDialog ?: Dialog(activity).also { d ->
+            d.requestWindowFeature(Window.FEATURE_NO_TITLE)
+            d.setContentView(speedSheetView)
+            d.setOnDismissListener { if (speedRunning) speed?.cancel() }
+            speedDialog = d
+        }
+        dialog.show()
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            setGravity(Gravity.BOTTOM)
+            setDimAmount(0.55f)
+        }
     }
 
     // ------------------------------------------------------------------ estado
@@ -211,15 +266,15 @@ class DiagnosticPage(
             speedButton.text = "Parar"
             ui.danger(speedButton)
         } else {
-            speedButton.text = "Testar velocidade"
+            speedButton.text = "Fechar"
             ui.secondary(speedButton)
         }
-        ui.setEnabled(speedButton, speedRunning || idleGlobal)
     }
 
     fun shutdown() {
         engine?.cancel()
         speed?.cancel()
+        speedDialog?.dismiss()
         executor.shutdownNow()
     }
 
@@ -240,9 +295,22 @@ class DiagnosticPage(
         row.status = step.status
         row.badge.status = step.status
 
-        val text = if (step.status == Status.RUNNING) "verificando…" else step.detail
-        row.detail.text = text
-        row.detail.visibility = if (text.isBlank()) View.GONE else View.VISIBLE
+        val (word, wordColor) = when (step.status) {
+            Status.OK -> "OK" to ui.green
+            Status.FAIL -> "Falha" to ui.red
+            Status.WARN -> "Aviso" to ui.orange
+            Status.RUNNING -> "verificando…" to ui.accentInk
+            Status.SKIP -> "Pulado" to ui.muted
+            Status.PENDING -> "—" to ui.muted
+        }
+        row.word.text = word
+        row.word.setTextColor(wordColor)
+
+        row.detail.text = when (step.status) {
+            Status.PENDING -> "Ainda não testado."
+            Status.RUNNING -> "verificando…"
+            else -> step.detail.ifBlank { "—" }
+        }
         row.detail.setTextColor(
             when (step.status) {
                 Status.WARN -> ui.orange
@@ -257,7 +325,9 @@ class DiagnosticPage(
         if (tip != null) {
             row.tip.background = ui.roundRect(ui.softFill(if (step.status == Status.FAIL) ui.red else ui.orange), 12f)
         }
-        if (::diagRing.isInitialized) updateVerdict()
+        // A primeira etapa com problema abre sozinha, já com a dica.
+        if ((step.status == Status.FAIL || step.status == Status.WARN) && rows.values.none { it.open }) setOpen(row, true)
+        if (::verdictTitle.isInitialized) updateVerdict()
     }
 
     /** Uma sugestão do que pode ser, para cada etapa que falhou ou ficou com aviso. */
@@ -304,6 +374,7 @@ class DiagnosticPage(
     }
 
     private fun resetRows() {
+        for (row in rows.values) setOpen(row, false)
         for ((id, title) in DiagnosticEngine.STEP_TITLES) updateRow(StepOutcome(id, title, Status.PENDING, ""))
     }
 
@@ -314,7 +385,6 @@ class DiagnosticPage(
         diagRunning = true
         refreshButtons()
         resetRows()
-        shareButton.visibility = View.GONE
 
         val net = host.netInfo()
         lastNet = net
@@ -351,7 +421,6 @@ class DiagnosticPage(
         }
 
         lastReport = report
-        shareButton.visibility = View.VISIBLE
     }
 
     // ------------------------------------------------------------------ velocidade
@@ -376,7 +445,6 @@ class DiagnosticPage(
 
         speedRunning = true
         refreshButtons()
-        shareButton.visibility = View.GONE
         for (t in listOf(speedDown, speedUp, speedPing, speedJitter)) t.text = "—"
         lastNet = host.netInfo()
         lastAt = Date()
@@ -445,7 +513,6 @@ class DiagnosticPage(
 
         if (result.downMbps > 0 || result.upMbps > 0) {
             lastSpeed = result
-            shareButton.visibility = View.VISIBLE
         }
     }
 

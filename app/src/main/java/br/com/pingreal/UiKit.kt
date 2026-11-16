@@ -265,6 +265,8 @@ class IconView(context: Context, kind: Int, private val sizeDp: Float = 24f) : V
         const val EXPAND_ALL = 6
         const val COLLAPSE_ALL = 7
         const val PLUS = 9
+        const val GAUGE = 10
+        const val SHARE = 11
     }
 
     var kind: Int = kind
@@ -366,6 +368,23 @@ class IconView(context: Context, kind: Int, private val sizeDp: Float = 24f) : V
             PLUS -> {
                 canvas.drawLine(x(0.22f), y(0.5f), x(0.78f), y(0.5f), paint)
                 canvas.drawLine(x(0.5f), y(0.22f), x(0.5f), y(0.78f), paint)
+            }
+            GAUGE -> {
+                // Velocímetro: arco aberto embaixo e o ponteiro.
+                rect.set(x(0.16f), y(0.22f), x(0.84f), y(0.90f))
+                canvas.drawArc(rect, 150f, 240f, false, paint)
+                canvas.drawLine(x(0.5f), y(0.56f), x(0.66f), y(0.38f), paint)
+                paint.style = Paint.Style.FILL
+                canvas.drawCircle(x(0.5f), y(0.56f), paint.strokeWidth * 1.1f, paint)
+                paint.style = Paint.Style.STROKE
+            }
+            SHARE -> {
+                // Seta para cima saindo de uma bandeja.
+                canvas.drawLine(x(0.5f), y(0.16f), x(0.5f), y(0.60f), paint)
+                path.reset()
+                path.moveTo(x(0.32f), y(0.33f)); path.lineTo(x(0.5f), y(0.15f)); path.lineTo(x(0.68f), y(0.33f))
+                path.moveTo(x(0.24f), y(0.50f)); path.lineTo(x(0.24f), y(0.82f)); path.lineTo(x(0.76f), y(0.82f)); path.lineTo(x(0.76f), y(0.50f))
+                canvas.drawPath(path, paint)
             }
             EXPAND_ALL, COLLAPSE_ALL -> {
                 // Duas setas: para fora (expandir tudo) ou para dentro (recolher tudo).
