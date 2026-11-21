@@ -5,8 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# "write" para publicar cada APK numa Release (é de lá que o "Buscar atualizações" do app baixa).
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -15,6 +16,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Read version
+        id: ver
+        run: |
+          CODE=$(grep -oP 'versionCode = \K[0-9]+' app/build.gradle.kts)
+          NAME=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "## PingLab $NAME (versão $CODE)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -44,6 +54,22 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: PingReal-APK
+          name: PingLab-APK
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+      # Uma Release por versão, com a tag build-<versionCode>; o app compara esse número com o instalado.
+      - name: Publish release
+        if: success() && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CODE='${{ steps.ver.outputs.code }}'
+          NAME='${{ steps.ver.outputs.name }}'
+          APK="app/build/outputs/apk/debug/PingReal-v.$NAME.apk"
+          test -f "$APK" || { echo "APK não encontrado: $APK"; ls app/build/outputs/apk/debug/; exit 1; }
+          gh release delete "build-$CODE" --yes --cleanup-tag || true
+          gh release create "build-$CODE" "$APK" \
+            --title "$NAME" \
+            --notes "PingLab $NAME" \
+            --latest
