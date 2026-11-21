@@ -66,6 +66,8 @@ class MainActivity : Activity(), PageHost {
 
     private var busy = false
     private var currentTab = 0
+    private val TAB_COUNT = 2
+    private val DIAGNOSTIC_TAB = 2
     private var importCallback: ((String) -> Unit)? = null
     private var backgroundedAt = 0L
     private var cachedNet = NetInfo.EMPTY
@@ -384,7 +386,7 @@ class MainActivity : Activity(), PageHost {
         condo = CondoPage(this, ui, this)
         // Deslizar para os lados troca de aba.
         val frame = SwipeFrame(this) { direction -> swipeTab(direction) }
-        for (page in listOf(terminal.view, diagnostic.view, condo.view)) {
+        for (page in listOf(terminal.view, condo.view, diagnostic.view)) {
             frame.addView(page, FrameLayout.LayoutParams(-1, -1))
             pages.add(page)
         }
@@ -397,14 +399,13 @@ class MainActivity : Activity(), PageHost {
             setPadding(ui.dp(4), ui.dp(4), ui.dp(4), ui.dp(4))
         }
         nav.addView(navItem(0, IconView.TERMINAL, "Terminal"), ui.lp(0, -2, 1f))
-        nav.addView(navItem(1, IconView.DIAGNOSTIC, "Diagnóstico"), ui.lp(0, -2, 1f).apply { marginStart = ui.dp(4) })
-        nav.addView(navItem(2, IconView.HOUSE, "Condomínio"), ui.lp(0, -2, 1f).apply { marginStart = ui.dp(4) })
+        nav.addView(navItem(1, IconView.HOUSE, "Condomínio"), ui.lp(0, -2, 1f).apply { marginStart = ui.dp(4) })
         // Pontinhos: em qual aba você está (e que dá para deslizar).
         tabDots = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
         }
-        repeat(pages.size) { i ->
+        repeat(TAB_COUNT) { i ->
             tabDots.addView(View(this), ui.lp(ui.dp(6), ui.dp(6)).apply { if (i > 0) marginStart = ui.dp(6) })
         }
         root.addView(tabDots, ui.lp(-1, -2).apply { topMargin = ui.dp(8) })
@@ -427,6 +428,12 @@ class MainActivity : Activity(), PageHost {
             addView(text, ui.lp(-2, -2).apply { topMargin = ui.dp(2) })
             setOnClickListener { selectTab(index) }
         }
+    }
+
+    /** O diagnóstico não tem aba na barra: abre pelo menu ⋮ e o botão voltar leva ao Terminal. */
+    @Suppress("OVERRIDE_DEPRECATION")
+    override fun onBackPressed() {
+        if (currentTab == DIAGNOSTIC_TAB) selectTab(0) else @Suppress("DEPRECATION") super.onBackPressed()
     }
 
     private fun selectTab(index: Int) {
@@ -452,7 +459,7 @@ class MainActivity : Activity(), PageHost {
     /** Deslize: +1 vai para a aba da direita, -1 para a da esquerda. A aba entra vindo do lado certo. */
     private fun swipeTab(direction: Int) {
         val next = currentTab + direction
-        if (next !in pages.indices) return
+        if (currentTab >= TAB_COUNT || next !in 0 until TAB_COUNT) return
         selectTab(next)
         val page = pages[next]
         page.translationX = direction * ui.dpf(48f)
@@ -485,6 +492,10 @@ class MainActivity : Activity(), PageHost {
             setPadding(ui.dp(24), ui.dp(20), ui.dp(24), ui.dp(6))
             addView(ui.tv("Opções", 20f, ui.white, bold = true))
             addView(versionRow, ui.lp(-1, -2))
+            addView(ui.textAction("Diagnóstico completo") {
+                dialog?.dismiss()
+                if (themeChanged) recreate() else selectTab(DIAGNOSTIC_TAB)
+            }, ui.lp(-2, -2).apply { marginStart = -ui.dp(12) })
         }
         val builder = AlertDialog.Builder(this)
             .setCustomTitle(title)
@@ -508,7 +519,7 @@ class MainActivity : Activity(), PageHost {
             .setPositiveButton("OK") { _, _ -> if (themeChanged) recreate() }
             .setOnCancelListener { if (themeChanged) recreate() }
         // Importar ONUs só faz sentido na aba Condomínio.
-        if (currentTab == 2) builder.setNeutralButton("Importar ONUs") { _, _ -> condo.startImport() }
+        if (currentTab == 1) builder.setNeutralButton("Importar ONUs") { _, _ -> condo.startImport() }
         dialog = builder.show()
     }
 
