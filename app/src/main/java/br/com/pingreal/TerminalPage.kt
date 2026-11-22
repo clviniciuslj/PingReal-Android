@@ -74,6 +74,8 @@ class TerminalPage(
     private lateinit var chartSubtitle: TextView
     private lateinit var latencyNow: TextView
     private lateinit var singleStats: LinearLayout
+    private lateinit var chartRowView: LinearLayout
+    private var chartExpanded = false
     private lateinit var multiBox: LinearLayout
     private lateinit var statMin: TextView
     private lateinit var statAvg: TextView
@@ -218,7 +220,7 @@ class TerminalPage(
             textSize = 15f
             setTextColor(ui.white)
             setHintTextColor(ui.muted)
-            hint = "IP ou host (vários: 8.8.8.8, 1.1.1.1)"
+            hint = "IP ou host (vários, com vírgula)"
             // A dica em Barlow (cabe inteira); o que se digita, na fonte do console.
             typeface = Fonts.regular
             background = null
@@ -252,7 +254,6 @@ class TerminalPage(
             setOnClickListener { toggleFavorite() }
         }
         inputRow.addView(hostInput, ui.lp(0, ui.dp(52), 1f))
-        inputRow.addView(favButton, ui.lp(ui.dp(48), ui.dp(52)))
         // O campo, os atalhos e os botões entram no fim da tela (perto do polegar); veja o final de build().
 
         // ---- atalhos (gateway, DNS, favoritos, recentes) ----
@@ -266,16 +267,18 @@ class TerminalPage(
             addView(chipsRow, ViewGroup.LayoutParams(-2, -2))
         }
 
-        // ---- Iniciar | Traceroute: uma barra dividida em duas metades iguais ----
-        val buttons = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
-        runButton = ui.button("Iniciar", ui.accent, ui.onAccent) {
+        // ---- ">" (inicia o ping, dentro do campo) e "TR" (traceroute, ao lado do campo) ----
+        runButton = ui.button(">", Color.TRANSPARENT, ui.accentInk) {
             if (run == Run.PING) stopRun() else startPing()
         }
-        ui.corners(runButton, floatArrayOf(16f, 5f, 5f, 16f))
-        traceButton = ui.button("Traceroute", ui.accent, ui.onAccent) {
+        ui.corners(runButton, floatArrayOf(16f, 16f, 16f, 16f))
+        runButton.textSize = 24f
+        runButton.contentDescription = "Iniciar ping"
+        traceButton = ui.button("TR", ui.accent, ui.onAccent) {
             if (run == Run.TRACE) stopRun() else startTraceRoute()
         }
-        ui.corners(traceButton, floatArrayOf(5f, 16f, 16f, 5f))
+        ui.corners(traceButton, floatArrayOf(16f, 16f, 16f, 16f))
+        traceButton.contentDescription = "Traceroute"
         // Toque longo: mostra a linha crua que o ping devolveu em cada salto (para depurar o formato).
         traceButton.setOnLongClickListener {
             if (run == Run.IDLE) {
@@ -288,27 +291,37 @@ class TerminalPage(
             }
             true
         }
-        buttons.addView(runButton, ui.lp(0, ui.dp(44), 1f))
-        buttons.addView(traceButton, ui.lp(0, ui.dp(44), 1f).apply { marginStart = ui.dp(3) })
+
+        // ---- em cima: campo do alvo e atalhos ----
+        // Só o campo (com a estrela dentro) e o ">" que inicia/para o ping, ao lado.
+        val topRow = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+        inputRow.addView(runButton, ui.lp(ui.dp(52), ui.dp(52)))
+        topRow.addView(inputRow, ui.lp(0, ui.dp(52), 1f))
+        topRow.addView(traceButton, ui.lp(ui.dp(56), ui.dp(52)).apply { marginStart = ui.dp(8) })
+        view.addView(topRow, ui.lp(-1, -2))
 
         // ---- gráfico (compacto, no meio) ----
-        val chartCard = ui.card().apply { setPadding(ui.dp(16), ui.dp(12), ui.dp(16), ui.dp(12)) }
-        val chartHeader = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
-        chartSubtitle = ui.tv("últimos 35 s", 12f, ui.muted)
-        val chartTitle = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            addView(ui.tv("Latência", 15f, ui.white, bold = true))
-            addView(chartSubtitle, ui.lp(-2, -2).apply { marginStart = ui.dp(8) })
+        // Fino: só a linha que oscila e a latência agora; sem caixa, o resto da tela é do console.
+        val chartCard = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(ui.dp(4), 0, ui.dp(4), 0)
         }
-        latencyNow = ui.tv("— ms", 22f, ui.white, bold = true, mono = true)
-        chartHeader.addView(chartTitle, ui.lp(0, -2, 1f))
-        chartHeader.addView(latencyNow)
-        chartCard.addView(chartHeader, ui.lp(-1, -2))
+        chartSubtitle = ui.tv("últimos 35 s", 12f, ui.muted)
+        latencyNow = ui.tv("— ms", 20f, ui.white, bold = true, mono = true)
+        chart = LatencyChartView(activity).apply {
+            compact = true
+            onTap = { setChartExpanded(!chartExpanded) }
+        }
+        val chartRow = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(chart, ui.lp(0, ui.dp(40), 1f))
+            addView(latencyNow, ui.lp(-2, -2).apply { marginStart = ui.dp(12) })
+        }
+        chartRowView = chartRow
+        chartCard.addView(chartRow, ui.lp(-1, -2).apply { bottomMargin = ui.dp(8) })
 
-        chart = LatencyChartView(activity)
-        chartCard.addView(chart, ui.lp(-1, ui.dp(84)).apply { topMargin = ui.dp(4); bottomMargin = ui.dp(10) })
-
-        singleStats = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+        singleStats = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; visibility = View.GONE }
         fun statCell(label: String): TextView {
             val value = ui.tv(DASH, 14f, ui.white, bold = true, mono = true).apply { maxLines = 1 }
             singleStats.addView(ui.metric(label, value), ui.lp(0, -2, 1f))
@@ -327,20 +340,18 @@ class TerminalPage(
             visibility = View.GONE
         }
         chartCard.addView(multiBox, ui.lp(-1, -2))
-        view.addView(chartCard, ui.lp(-1, -2))
+        view.addView(chartCard, ui.lp(-1, -2).apply { topMargin = ui.dp(12) })
 
-        // ---- console (ocupa o resto da tela) ----
+        // ---- console (campo livre: sem caixa, ocupa o resto da tela) ----
         val consoleCard = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            background = ui.roundRect(ui.consoleBg, 20f, ui.panelStroke)
-            setPadding(ui.dp(4), ui.dp(4), ui.dp(4), ui.dp(10))
+            setPadding(0, 0, 0, ui.dp(4))
         }
         val consoleHeader = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(ui.dp(12), 0, 0, 0)
         }
-        consoleHeader.addView(ui.tv("Console", 15f, ui.white, bold = true), ui.lp(0, -2, 1f))
+        consoleHeader.addView(View(activity), ui.lp(0, 1, 1f))
         consoleHeader.addView(ui.textAction("Enviar") { showShareDialog() })
         consoleHeader.addView(ui.textAction("Limpar") { clearAll() })
         consoleCard.addView(consoleHeader, ui.lp(-1, -2))
@@ -348,13 +359,13 @@ class TerminalPage(
         scroll = ScrollView(activity).apply { isFillViewport = true }
         output = ui.tv("", 12f, ui.text).apply {
             ui.code(this)
-            setPadding(ui.dp(12), ui.dp(2), ui.dp(12), ui.dp(4))
+            setPadding(ui.dp(4), ui.dp(2), ui.dp(4), ui.dp(4))
             setTextIsSelectable(true)
             setLineSpacing(ui.dpf(2f), 1f)
         }
         scroll.addView(output, ViewGroup.LayoutParams(-1, -2))
         consoleCard.addView(scroll, ui.lp(-1, 0, 1f))
-        view.addView(consoleCard, ui.lp(-1, 0, 1f).apply { topMargin = ui.dp(12) })
+        view.addView(consoleCard, ui.lp(-1, 0, 1f).apply { topMargin = ui.dp(4) })
 
         // ---- rede atual (uma linha) ----
         netLine = ui.tv("", 12f, ui.text, mono = true).apply {
@@ -364,35 +375,31 @@ class TerminalPage(
         }
         view.addView(netLine, ui.lp(-1, -2).apply { topMargin = ui.dp(8) })
 
-        // ---- embaixo: atalhos, campo do alvo e Iniciar | Traceroute ----
-        view.addView(chipsScroll, ui.lp(-1, -2).apply { topMargin = ui.dp(8) })
-        view.addView(inputRow, ui.lp(-1, -2).apply { topMargin = ui.dp(10) })
-        view.addView(buttons, ui.lp(-1, -2).apply { topMargin = ui.dp(12) })
     }
 
     private fun refreshButtons() {
         when (run) {
             Run.PING -> {
-                runButton.text = "Parar"
-                ui.danger(runButton)
+                runButton.text = "■"
+                ui.style(runButton, Color.TRANSPARENT, ui.red)
                 ui.setEnabled(runButton, true)
-                traceButton.text = "Traceroute"
+                traceButton.text = "TR"
                 ui.primary(traceButton)
                 ui.setEnabled(traceButton, false)
             }
             Run.TRACE -> {
-                runButton.text = "Iniciar"
-                ui.primary(runButton)
+                runButton.text = ">"
+                ui.style(runButton, Color.TRANSPARENT, ui.accentInk)
                 ui.setEnabled(runButton, false)
-                traceButton.text = "Parar"
+                traceButton.text = "■"
                 ui.danger(traceButton)
                 ui.setEnabled(traceButton, true)
             }
             Run.IDLE -> {
-                runButton.text = "Iniciar"
-                ui.primary(runButton)
+                runButton.text = ">"
+                ui.style(runButton, Color.TRANSPARENT, ui.accentInk)
                 ui.setEnabled(runButton, idleGlobal)
-                traceButton.text = "Traceroute"
+                traceButton.text = "TR"
                 ui.primary(traceButton)
                 ui.setEnabled(traceButton, idleGlobal)
             }
@@ -426,10 +433,18 @@ class TerminalPage(
     // Estatísticas (uma linha de resumo ou uma linha por alvo)
     // =====================================================================
 
+    /** Toque no gráfico: ele cresce, mostra as estatísticas e o dedo passa a ler o valor de cada instante. */
+    private fun setChartExpanded(expanded: Boolean) {
+        chartExpanded = expanded
+        chart.compact = !expanded
+        chart.layoutParams = (chart.layoutParams as LinearLayout.LayoutParams).apply { height = ui.dp(if (expanded) 150 else 40) }
+        buildStatsPanel()
+    }
+
     private fun buildStatsPanel() {
         val multi = sessions.size > 1
-        singleStats.visibility = if (multi) View.GONE else View.VISIBLE
-        multiBox.visibility = if (multi) View.VISIBLE else View.GONE
+        singleStats.visibility = if (multi || !chartExpanded) View.GONE else View.VISIBLE
+        multiBox.visibility = if (multi && chartExpanded) View.VISIBLE else View.GONE
         latencyNow.visibility = if (multi) View.GONE else View.VISIBLE
         chartSubtitle.text = if (multi) "${sessions.size} alvos, últimos 35 s" else "últimos 35 s"
 

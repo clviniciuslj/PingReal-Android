@@ -342,16 +342,7 @@ class MainActivity : Activity(), PageHost {
         }
 
         // ---- cabeçalho: marca centralizada com o status embaixo; opções à direita ----
-        val header = FrameLayout(this).apply { setPadding(0, ui.dp(2), 0, ui.dp(12)) }
-        val brand = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            addView(BrandMarkView(this@MainActivity), ui.lp(ui.dp(30), ui.dp(30)).apply { marginEnd = ui.dp(10) })
-            addView(ui.tv("PingLab", 26f, ui.white).apply {
-                typeface = Fonts.bold
-                letterSpacing = 0.01f
-            })
-        }
+        val header = FrameLayout(this).apply { setPadding(0, ui.dp(2), 0, ui.dp(4)) }
         statusText = ui.medium("Pronto", 12f, ui.muted)
         statusDot = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
@@ -366,8 +357,7 @@ class MainActivity : Activity(), PageHost {
         val center = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            addView(brand, ui.lp(-2, -2))
-            addView(status, ui.lp(-2, -2).apply { topMargin = ui.dp(1) })
+            addView(status, ui.lp(-2, -2))
         }
         header.addView(center, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
         val more = IconView(this, IconView.MORE, 22f).apply {
@@ -641,7 +631,7 @@ class MainActivity : Activity(), PageHost {
         val width = 1080
         val pad = 48
         val inner = width - 2 * pad
-        val withChart = chart != null && chart.width > 0 && chart.height > 0
+        val withChart = chart != null && chart.width > 0 && chart.reportHeight > 0
 
         val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = ui.white
@@ -662,7 +652,7 @@ class MainActivity : Activity(), PageHost {
             .build()
 
         val scale = if (withChart) inner.toFloat() / chart!!.width else 1f
-        val scaledChartH = if (withChart) (chart!!.height * scale).toInt() else 0
+        val scaledChartH = if (withChart) (chart!!.reportHeight * scale).toInt() else 0
 
         var y = pad + 52
         val titleBaseline = y.toFloat()
@@ -690,7 +680,7 @@ class MainActivity : Activity(), PageHost {
             canvas.save()
             canvas.translate(pad.toFloat(), chartTop.toFloat())
             canvas.scale(scale, scale)
-            chart!!.draw(canvas)
+            chart!!.drawFull(canvas, chart.width, chart.reportHeight)
             canvas.restore()
         }
 
