@@ -81,7 +81,8 @@ class PingStats {
     }
 }
 
-class PingReply(val address: String, val ttl: String, val timeMs: Double, val seq: Int?)
+/** [bytes]: o tamanho que o próprio ping do celular informou ("64 bytes from…"), 0 se não veio na linha. */
+class PingReply(val address: String, val ttl: String, val timeMs: Double, val seq: Int?, val bytes: Int = 0)
 
 /**
  * Um ping contra um único alvo. Roda o binário do sistema numa thread própria e entrega tudo
@@ -132,11 +133,11 @@ class PingSession(
         fun parseReply(line: String): PingReply? {
             REPLY_STRICT.find(line)?.let { m ->
                 val time = m.groupValues[5].toDoubleOrNull() ?: return null
-                return PingReply(m.groupValues[2].trim(), m.groupValues[4], time, m.groupValues[3].toIntOrNull())
+                return PingReply(m.groupValues[2].trim(), m.groupValues[4], time, m.groupValues[3].toIntOrNull(), m.groupValues[1].toIntOrNull() ?: 0)
             }
             REPLY_LOOSE.find(line)?.let { m ->
                 val time = m.groupValues[4].toDoubleOrNull() ?: return null
-                return PingReply(m.groupValues[2].trim().removeSuffix(":"), m.groupValues[3], time, null)
+                return PingReply(m.groupValues[2].trim().removeSuffix(":"), m.groupValues[3], time, null, m.groupValues[1].toIntOrNull() ?: 0)
             }
             return null
         }

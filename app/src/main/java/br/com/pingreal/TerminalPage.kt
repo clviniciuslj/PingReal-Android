@@ -56,7 +56,8 @@ class TerminalPage(
         private const val MAX_CONSOLE_LINES = 600
         private const val TRIM_LINES = 100
         private const val MAX_HISTORY = 12
-        private const val DEFAULT_SIZE = 32
+        // Padrão do ping do Android/Linux: 56 bytes de dados + 8 de cabeçalho ICMP = "64 bytes".
+        private const val DEFAULT_SIZE = 56
         private const val DASH = NetInfo.NONE
         private const val RULE = "────────────────────────────"
         private val WHITESPACE = Regex("\\s+")
@@ -121,7 +122,7 @@ class TerminalPage(
             chart.addSample(sessions.indexOf(session), sampleTime, reply.timeMs.toFloat())
             val shown = if (reply.timeMs < 1) "<1" else reply.timeMs.roundToInt().toString()
             append(
-                "${prefix(session)}Resposta de ${reply.address}: bytes=${session.size} tempo=${shown}ms TTL=${reply.ttl}",
+                "${prefix(session)}Resposta de ${reply.address}: bytes=${if (reply.bytes > 0) reply.bytes else session.size + 8} tempo=${shown}ms TTL=${reply.ttl}",
                 if (sessions.size > 1) session.color else ui.text
             )
             updateStats()
@@ -793,7 +794,7 @@ class TerminalPage(
         append("> $raw", ui.white)
         if (targets.size == 1) {
             val t = targets[0]
-            val sizeNote = if (t.size != DEFAULT_SIZE) " com ${t.size} bytes" else ""
+            val sizeNote = if (t.size != DEFAULT_SIZE) " com ${t.size} bytes de dados" else ""
             append(
                 if (t.continuous) "Ping contínuo para ${t.host}$sizeNote"
                 else "Ping para ${t.host} (${t.count} tentativas)$sizeNote",
